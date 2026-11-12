@@ -1,0 +1,28 @@
+- id: llm-pi-ai
+  config:
+    providers:
+      alicloud:
+        apiKeyEnv: CUA_MODEL_API_KEY
+        api: openai-completions
+        baseURL: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        timeoutMs: 300000
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: deepseek-v4.1-flash
+            input: [text, image]
+            maxTokens: 32768
+- id: agent-default-model
+  config:
+    provider: alicloud
+    model: deepseek-v4.1-flash
+- insert:
+    - id: computer-use
+      name: '@deepseek-ai/dsh-computer-use'
+    - id: computer-use-cua-driver-mcp
+      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp'
+      config:
+        command: cua-driver
+        args: [mcp]
+        toolCallTimeoutMs: 300000

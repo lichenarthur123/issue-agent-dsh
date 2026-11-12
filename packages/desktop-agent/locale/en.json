@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Desktop Cua agent",
+    "description": "Serializes desktop access and saves verified task results from DSH sessions."
+  }
+}

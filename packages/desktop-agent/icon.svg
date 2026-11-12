@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Desktop Cua agent">
+  <rect x="6" y="8" width="52" height="38" rx="6" fill="#315efb"/>
+  <rect x="12" y="14" width="40" height="26" rx="2" fill="#fff"/>
+  <path d="M27 54h10M32 46v8" stroke="#315efb" stroke-width="4" stroke-linecap="round"/>
+  <path d="m35 18 10 9-6 1-3 6z" fill="#315efb"/>
+</svg>

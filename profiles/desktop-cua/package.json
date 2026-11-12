@@ -1,0 +1,18 @@
+{
+  "name": "dsh-profile-desktop-cua",
+  "private": true,
+  "dependencies": {
+    "@deepseek-ai/dsh-computer-use": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp": "0.2.2-rc.1",
+    "@local/desktop-agent": "0.1.0"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-headless",
+        "@local/desktop-agent"
+      ]
+    }
+  }
+}

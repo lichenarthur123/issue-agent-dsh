@@ -1,0 +1,21 @@
+- insert:
+    - id: desktop-agent
+      name: '@local/desktop-agent'
+      config:
+        artifactRoot: artifacts/native
+        lockFile: artifacts/desktop.lock
+        taskTimeoutMs: 600000
+        budget:
+          maxDesktopCalls: 400
+          maxObservationCalls: 120
+          maxObservationElements: 1500
+        policy:
+          blockedTools:
+            - kill_app
+          blockedShortcuts:
+            - cmd+q
+            - cmd+shift+q
+            - cmd+opt+esc
+            - ctrl+cmd+q
+          allowedApps: []
+          allowedUrlHosts: []

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "桌面 Cua Agent",
+    "description": "串行化桌面访问，并从 DSH 会话保存经过验证的任务结果。"
+  }
+}

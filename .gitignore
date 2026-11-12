@@ -1,0 +1,13 @@
+# 密钥与环境
+.env
+.env.*
+!.env.example
+
+# 任务产物与截图
+artifacts/
+
+# 依赖与构建
+.tools/
+node_modules/
+dist/
+.DS_Store
