@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { log } from './log.js'
 import { CUA_TOOL_PREFIX } from './results.js'
 import { callCuaTool, captureWindow, ensureWindowVisible } from './window.js'
 import { groundUi } from './grounder.js'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+const runCommand = promisify(execFile)
 
 const normalizeLabel = text => String(text ?? '')
   .replace(/\s+/g, ' ')
@@ -564,7 +567,37 @@ export async function selectOption(ctx, agent, settings, decision, targetWindow,
   return execution
 }
 
-export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, existing = null }) {
+const EXISTING_BROWSER_NAME = /^(google chrome|chrome|microsoft edge|edge)$/i
+const EXISTING_BROWSER_ID = /^(com\.google\.chrome|com\.microsoft\.edge)$/i
+const CRASH_PAGE = /喔唷，崩溃啦|Aw, Snap|ERR_FILE_NOT_FOUND|ERR_CONNECTION_|ERR_NAME_NOT_RESOLVED|ERR_TIMED_OUT/i
+
+function isExistingBrowserWindow(window) {
+  return EXISTING_BROWSER_NAME.test(String(window?.app_name ?? '').trim())
+    || EXISTING_BROWSER_ID.test(String(window?.bundle_id ?? '').trim())
+}
+
+function isFatalNavigationError(error) {
+  return /browser_consent_required|browser_wrong_target_refused|requires an open Google Chrome|browser crashed while loading/.test(error.message)
+}
+
+async function openExistingBrowser(profile, restart) {
+  const app = profile.app ?? 'Google Chrome'
+  const bundleId = app === 'Google Chrome' ? 'com.google.Chrome'
+    : app === 'Microsoft Edge' ? 'com.microsoft.Edge'
+      : null
+  const language = String(profile.lang ?? 'en-US').split('-')[0]
+  if (bundleId) {
+    await runCommand('defaults', ['write', bundleId, 'AppleLanguages', '-array', language])
+  }
+  if (restart) {
+    await runCommand('osascript', ['-e', `tell application "${app}" to quit`]).catch(() => {})
+    await delay(2000)
+  }
+  await runCommand('open', ['-a', app, '--args', '--new-window'])
+  await delay(1500)
+}
+
+export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, existing = null, profile = { mode: 'isolated_new' }, openBrowser = openExistingBrowser }) {
   const execution = { calls: [], response: '' }
   const call = async (name, args) => {
     const record = {
@@ -585,20 +618,44 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       throw error
     }
   }
+  const settle = async (pid, windowId, navigateArgs) => {
+    await delay(500)
+    let text = ''
+    try {
+      text = (await captureWindow(ctx, agent, { pid, window_id: windowId, maxElements: 50 })).text
+    } catch {
+      return false
+    }
+    if (!CRASH_PAGE.test(text)) return false
+    log.exec(`browser crash page detected; reloading ${navigateArgs.url} once`)
+    await call('browser_navigate', navigateArgs)
+    await delay(500)
+    let retryText = ''
+    try {
+      retryText = (await captureWindow(ctx, agent, { pid, window_id: windowId, maxElements: 50 })).text
+    } catch {
+      return true
+    }
+    if (CRASH_PAGE.test(retryText)) throw new Error(`browser crashed while loading ${navigateArgs.url}`)
+    return true
+  }
 
   if (existing) {
     try {
-      await call('browser_navigate', {
+      const navigateArgs = {
         session: existing.session,
         target_id: existing.targetId,
         tab_id: existing.tabId,
         url,
-      })
+      }
+      await call('browser_navigate', navigateArgs)
+      const reloaded = await settle(existing.pid, existing.windowId, navigateArgs)
       execution.pageTarget = existing
-      execution.response = `Navigated to ${url}`
+      execution.response = `Navigated to ${url}${reloaded ? ' after one reload' : ''}`
       await ensureWindowVisible(ctx, agent, { pid: existing.pid, window_id: existing.windowId })
       log.exec(`page reused pid=${existing.pid} window=${existing.windowId} url=${url}`)
     } catch (error) {
+      execution.fatal = isFatalNavigationError(error)
       execution.response = error.message
       log.exec(`navigation failed: ${error.message}`)
     }
@@ -606,17 +663,61 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
   }
 
   try {
-    const prepared = await call('browser_prepare', {
-      session: sessionId,
-      allow_launch: true,
-      profile: { mode: 'isolated_new' },
-    })
-    const pid = prepared.prepared_pid ?? prepared.structuredContent?.prepared_pid
+    let pid
+    let window
+    if (profile.mode === 'existing_profile') {
+      const findWindow = async () => {
+        const listed = await call('list_windows', { on_screen_only: false })
+        const snapshot = listed.structuredContent ?? listed
+        const candidates = (snapshot.windows ?? []).filter(isExistingBrowserWindow)
+        return { window: selectWindow(candidates), snapshot }
+      }
+      let found = await findWindow()
+      if (!found.window) {
+        await openBrowser(profile, false)
+        found = await findWindow()
+      }
+      window = found.window
+      if (!window) {
+        const apps = [...new Set((found.snapshot.windows ?? []).map(item => item.app_name).filter(Boolean))].slice(0, 10).join(' / ')
+        throw new Error(`existing_profile requires an open Google Chrome or Microsoft Edge window; open the browser and log in first${apps ? ` (open apps: ${apps})` : ''}`)
+      }
+      const prepare = async () => call('browser_prepare', {
+        session: sessionId,
+        pid: window.pid,
+        window_id: window.window_id,
+        strategy: { kind: 'existing_profile' },
+      })
+      let prepared
+      try {
+        prepared = await prepare()
+      } catch (error) {
+        if (!/browser_wrong_target_refused/.test(error.message)) throw error
+        execution.calls.pop()
+        await openBrowser(profile, true)
+        found = await findWindow()
+        window = found.window
+        if (!window) throw new Error('existing_profile could not find the Chrome or Edge window after restarting the browser')
+        prepared = await prepare()
+      }
+      pid = prepared.prepared_pid ?? prepared.structuredContent?.prepared_pid ?? window.pid
+    } else {
+      const launchProfile = profile.mode === 'isolated_named'
+        ? { mode: 'isolated_named', name: profile.name ?? 'issue-agent' }
+        : { mode: 'isolated_new' }
+      const prepared = await call('browser_prepare', {
+        session: sessionId,
+        allow_launch: true,
+        profile: launchProfile,
+      })
+      pid = prepared.prepared_pid ?? prepared.structuredContent?.prepared_pid
+      if (!Number.isInteger(pid)) throw new Error('browser_prepare did not return prepared_pid')
+      const listed = await call('list_windows', { pid, on_screen_only: false })
+      const snapshot = listed.structuredContent ?? listed
+      window = selectWindow(snapshot.windows ?? [])
+      if (!window) throw new Error(`no content window is available for browser pid ${pid}`)
+    }
     if (!Number.isInteger(pid)) throw new Error('browser_prepare did not return prepared_pid')
-    const listed = await call('list_windows', { pid, on_screen_only: false })
-    const snapshot = listed.structuredContent ?? listed
-    const window = selectWindow(snapshot.windows ?? [])
-    if (!window) throw new Error(`no content window is available for browser pid ${pid}`)
     const state = await call('get_browser_state', {
       session: sessionId,
       pid,
@@ -626,12 +727,14 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
     const targetId = page.target_id
     const tab = (page.tabs ?? []).find(item => item.active) ?? page.tabs?.[0]
     if (!targetId || !tab?.tab_id) throw new Error('get_browser_state did not return target_id and an active tab_id')
-    await call('browser_navigate', {
+    const navigateArgs = {
       session: sessionId,
       target_id: targetId,
       tab_id: tab.tab_id,
       url,
-    })
+    }
+    await call('browser_navigate', navigateArgs)
+    const reloaded = await settle(pid, window.window_id, navigateArgs)
     execution.pageTarget = {
       session: sessionId,
       targetId,
@@ -639,7 +742,7 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       pid,
       windowId: window.window_id,
     }
-    execution.response = `Navigated to ${url}`
+    execution.response = `Navigated to ${url}${reloaded ? ' after one reload' : ''}`
     try {
       await ensureWindowVisible(ctx, agent, { pid, window_id: window.window_id })
       execution.activation = { status: 'succeeded', pid, window_id: window.window_id }
@@ -647,10 +750,14 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       execution.activation = { status: 'failed', pid, reason: error.message }
       log.exec(`activation failed: ${error.message}`)
     }
-    log.exec(`navigated pid=${pid} window=${window.window_id} url=${url}`)
+    log.exec(`navigated pid=${pid} window=${window.window_id} url=${url} profile=${profile.mode}`)
   } catch (error) {
-    execution.response = error.message
-    log.exec(`navigation failed: ${error.message}`)
+    const guidance = profile.mode === 'existing_profile'
+      ? '; existing_profile requires Cua Driver started with --grant existing-profile and an open Chrome or Edge window'
+      : ''
+    execution.fatal = isFatalNavigationError(error)
+    execution.response = `${error.message}${guidance}`
+    log.exec(`navigation failed: ${execution.response}`)
   }
   return execution
 }

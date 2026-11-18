@@ -1,7 +1,7 @@
 import { CUA_TOOL_PREFIX, OBSERVATION_TOOLS } from './results.js'
 
 export class DesktopBudget {
-  constructor({ maxDesktopCalls = 40, maxObservationCalls = 12, maxObservationElements = 150 } = {}) {
+  constructor({ maxDesktopCalls = 1000, maxObservationCalls = 400, maxObservationElements = 1500 } = {}) {
     this.maxDesktopCalls = maxDesktopCalls
     this.maxObservationCalls = maxObservationCalls
     this.maxObservationElements = maxObservationElements

@@ -39,7 +39,7 @@ function browserValues() {
   }
 }
 
-function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOnFailure = false, values = browserValues(), failTools = [], thinkingMode = 'adaptive' }) {
+function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOnFailure = false, values = browserValues(), failTools = [], failToolMessages = {}, thinkingMode = 'adaptive', plannerEnabled = true }) {
   const artifactRoot = mkdtempSync(join('artifacts', 'task-runner-test-'))
   t.after(() => rmSync(artifactRoot, { recursive: true, force: true }))
   const calls = []
@@ -80,7 +80,7 @@ function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOn
         const args = JSON.parse(call.arguments)
         calls.push({ name, args })
         if (failTools.includes(name)) {
-          return { results: [{ result: { isError: true, content: [{ type: 'text', text: `${name} failed` }] } }] }
+          return { results: [{ result: { isError: true, content: [{ type: 'text', text: failToolMessages[name] ?? `${name} failed` }] } }] }
         }
         const windowState = name === 'get_window_state' && Array.isArray(values.get_window_state)
           ? values.get_window_state.shift()
@@ -132,6 +132,8 @@ function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOn
     maxSteps,
     keepWindowsOnFailure,
     planner: { provider: 'planner', model: 'small' },
+    plannerEnabled,
+    browserProfile: { mode: 'isolated_new' },
     executor: { provider: 'executor', model: 'vl' },
     grounder: { baseURL: 'http://grounder', model: 'ui-tars' },
     thinkingMode,
@@ -229,6 +231,91 @@ test('the planner expands once and the executor owns a compact loop', async t =>
   assert.match(result.plan, /Executed:/)
   assert.equal(h.calls.some(call => call.name === 'end_session' && call.args.session === result.sessionId), true)
   assert.equal(h.agent[PRESERVE_WINDOWS_ON_FAILURE], false)
+})
+
+test('existing profile navigation preserves the local browser session', async t => {
+  const values = {
+    ...browserValues(),
+    list_windows: {
+      windows: [{
+        app_name: 'Google Chrome',
+        pid: 79854,
+        window_id: 17971,
+        title: 'AmaShop',
+        bounds: { width: 1200, height: 835 },
+        is_on_screen: true,
+        on_current_space: true,
+      }],
+    },
+  }
+  const h = harness(t, {
+    values,
+    decisions: [
+      { done: false, kind: 'navigate', action: '打开 AmaShop', url: 'http://127.0.0.1:8765/#/home' },
+      { done: true, response: '已使用本机登录态打开网站' },
+    ],
+    verifications: [{ status: 'passed', reason: '完成' }],
+  })
+  h.runner.settings.browserProfile = { mode: 'existing_profile' }
+  const result = await h.run()
+  assert.equal(result.status, 'succeeded')
+  const prepare = h.calls.find(call => call.name === 'browser_prepare')
+  assert.deepEqual(prepare.args, {
+    session: result.sessionId,
+    pid: 79854,
+    window_id: 17971,
+    strategy: { kind: 'existing_profile' },
+  })
+  assert.equal(h.calls.some(call => call.name === 'end_session'), false)
+})
+
+test('browser consent failures stop immediately without model retries', async t => {
+  const values = {
+    ...browserValues(),
+    list_windows: {
+      windows: [{
+        app_name: 'Google Chrome',
+        pid: 79854,
+        window_id: 17971,
+        title: 'AmaShop',
+        bounds: { width: 1200, height: 835 },
+        is_on_screen: true,
+        on_current_space: true,
+      }],
+    },
+  }
+  const h = harness(t, {
+    values,
+    failTools: ['browser_prepare'],
+    failToolMessages: { browser_prepare: 'browser_consent_required: existing-profile grant is missing' },
+    decisions: [
+      { done: false, kind: 'navigate', action: '打开 AmaShop', url: 'http://127.0.0.1:8765/#/home' },
+      { done: true, response: '不应执行到这里' },
+    ],
+  })
+  h.runner.settings.browserProfile = { mode: 'existing_profile' }
+  const result = await h.run()
+  assert.equal(result.status, 'failed')
+  assert.equal(h.executorRequests.length, 1)
+  assert.match(result.error.message, /browser_consent_required/)
+})
+
+test('planner can be disabled so the original task goes directly to the executor', async t => {
+  const h = harness(t, {
+    plannerEnabled: false,
+    decisions: [
+      { done: false, kind: 'key', value: 'return' },
+      { done: true, response: '已直接执行原始任务' },
+    ],
+    verifications: [{ status: 'passed', reason: '完成' }],
+  })
+  const result = await h.run()
+  assert.equal(h.plannerRequests.length, 0)
+  assert.deepEqual(h.modelCalls, [6000, 6000, 800])
+  assert.match(h.executorRequests[0][0].content[0].text, /No planner expands the task/)
+  assert.ok(!userText(h.executorRequests[0]).includes('<execution-plan>'))
+  assert.match(userText(h.executorRequests[0]), /<original-task>[\s\S]*上架商品/)
+  assert.match(result.plan, /Planner disabled; executed directly from the original task/)
 })
 
 test('completion feedback reaches the executor and requires whole-task verification', async t => {

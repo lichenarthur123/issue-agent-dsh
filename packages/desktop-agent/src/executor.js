@@ -5,13 +5,13 @@ import { budgetBytes, SCREENSHOT_PROMPT_BUDGET } from './prompt-budget.js'
 import { buildExecutorPrompt, executorSystem } from './prompt.js'
 
 export class Executor {
-  constructor(ctx, selection, { thinkingEffort = 'medium', observationMode = 'hybrid', coordinateSpace = 'pixels' } = {}) {
+  constructor(ctx, selection, { thinkingEffort = 'medium', observationMode = 'hybrid', coordinateSpace = 'pixels', plannerEnabled = false } = {}) {
     this.ctx = ctx
     this.selection = selection
     this.thinkingEffort = thinkingEffort
     this.observationMode = observationMode
     this.coordinateSpace = coordinateSpace
-    const system = executorSystem(observationMode, coordinateSpace)
+    const system = executorSystem(observationMode, coordinateSpace, { plannerEnabled })
     this.system = observationMode === 'screenshot'
       ? budgetBytes(system, SCREENSHOT_PROMPT_BUDGET.systemBytes)
       : system

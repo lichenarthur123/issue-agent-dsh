@@ -3,6 +3,7 @@ export const PROMPT_LIMITS = Object.freeze({
   plan: 12000,
   installedApps: 3000,
   ax: 12000,
+  axContext: 2000,
   verifierAx: 8000,
   historySummary: 2400,
   historyAction: 300,

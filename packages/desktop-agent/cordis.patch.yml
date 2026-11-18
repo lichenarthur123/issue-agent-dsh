@@ -5,6 +5,9 @@
         artifactRoot: artifacts/native
         lockFile: artifacts/desktop.lock
         taskTimeoutSeconds: 600
+        plannerEnabled: false
+        browserProfileMode: existing_profile
+        browserProfileName: issue-agent
         planner:
           provider: spark-executor
           model: qwen3.8-27b-nvfp4
@@ -21,8 +24,8 @@
           baseURL: http://10.10.10.1:8003/v1
           model: ui-tars-1.5-7b
         budget:
-          maxDesktopCalls: 400
-          maxObservationCalls: 120
+          maxDesktopCalls: 1000
+          maxObservationCalls: 400
           maxObservationElements: 1500
         policy:
           blockedTools:

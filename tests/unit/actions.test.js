@@ -67,6 +67,7 @@ test('browser navigation uses real window, target, and tab identifiers', async (
     'list_windows',
     'get_browser_state',
     'browser_navigate',
+    'get_window_state',
     'bring_to_front',
   ])
   assert.deepEqual(calls[2].args, { session: 'session-test', pid: 79854, window_id: 17971 })
@@ -132,9 +133,265 @@ test('browser navigation passes its own executor identifier guard', async () => 
   })
   assert.equal(execution.response, 'Navigated to http://127.0.0.1:8765/#/home')
   assert.equal(execution.calls.every(call => call.status === 'succeeded'), true)
-  assert.deepEqual(calls, ['browser_prepare', 'list_windows', 'get_browser_state', 'browser_navigate', 'bring_to_front'])
+  assert.deepEqual(calls, ['browser_prepare', 'list_windows', 'get_browser_state', 'browser_navigate', 'get_window_state', 'bring_to_front'])
 })
 
+
+test('browser navigation attaches to an existing logged-in Chrome profile', async () => {
+  const calls = []
+  const values = {
+    list_windows: {
+      windows: [
+        { app_name: 'Safari', pid: 100, window_id: 10, title: 'Safari', bounds: { width: 1200, height: 800 } },
+        {
+          app_name: 'Google Chrome',
+          pid: 4242,
+          window_id: 99,
+          title: 'AmaShop',
+          bounds: { width: 1200, height: 835 },
+          is_on_screen: true,
+          on_current_space: true,
+        },
+      ],
+    },
+    browser_prepare: { prepared_pid: 4242 },
+    get_browser_state: { target_id: 'bt-existing', tabs: [{ active: true, tab_id: 'tab-existing' }] },
+    browser_navigate: { status: 'ok' },
+    bring_to_front: {},
+  }
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const call = batch[0]
+        const name = call.name.replace('mcp__cua-driver-mcp__', '')
+        calls.push({ name, args: JSON.parse(call.arguments) })
+        return { results: [{ result: { isError: false, value: values[name] } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-existing',
+    url: 'http://127.0.0.1:8765/#/home',
+    profile: { mode: 'existing_profile' },
+    selectWindow: windows => runner.selectContentWindow(windows),
+  })
+  assert.deepEqual(calls.map(call => call.name), [
+    'list_windows',
+    'browser_prepare',
+    'get_browser_state',
+    'browser_navigate',
+    'get_window_state',
+    'bring_to_front',
+  ])
+  assert.deepEqual(calls[1].args, {
+    session: 'session-existing',
+    pid: 4242,
+    window_id: 99,
+    strategy: { kind: 'existing_profile' },
+  })
+  assert.equal(calls[1].args.allow_launch, undefined)
+  assert.deepEqual(execution.pageTarget, {
+    session: 'session-existing',
+    targetId: 'bt-existing',
+    tabId: 'tab-existing',
+    pid: 4242,
+    windowId: 99,
+  })
+})
+
+test('a Chrome crash page is reloaded exactly once', async () => {
+  const calls = []
+  let captures = 0
+  const values = {
+    browser_prepare: { prepared_pid: 79854 },
+    list_windows: {
+      windows: [{
+        pid: 79854,
+        window_id: 17971,
+        title: 'AmaShop',
+        bounds: { width: 1200, height: 835 },
+        is_on_screen: true,
+        on_current_space: true,
+      }],
+    },
+    get_browser_state: { target_id: 'bt-real', tabs: [{ active: true, tab_id: 'tab-real' }] },
+    browser_navigate: { status: 'ok' },
+    bring_to_front: {},
+  }
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const call = batch[0]
+        const name = call.name.replace('mcp__cua-driver-mcp__', '')
+        calls.push({ name, args: JSON.parse(call.arguments) })
+        let value = values[name]
+        if (name === 'get_window_state') {
+          captures += 1
+          value = {
+            structuredContent: { screenshot_width: 1200, screenshot_height: 835 },
+            content: [
+              { type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' },
+              { type: 'text', text: captures === 1 ? '喔唷，崩溃啦 错误代码: 5' : '商品详情页' },
+            ],
+          }
+        }
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-test',
+    url: 'http://127.0.0.1:8765/#/product/SKU-1001',
+    selectWindow: windows => runner.selectContentWindow(windows),
+  })
+  assert.equal(calls.filter(call => call.name === 'browser_navigate').length, 2)
+  assert.equal(execution.response, 'Navigated to http://127.0.0.1:8765/#/product/SKU-1001 after one reload')
+  assert.equal(execution.fatal, undefined)
+})
+
+test('browser consent errors are marked as unrecoverable', async () => {
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name.replace('mcp__cua-driver-mcp__', '')
+        if (name === 'list_windows') {
+          return {
+            results: [{
+              result: {
+                isError: false,
+                value: {
+                  windows: [{
+                    app_name: 'Google Chrome',
+                    pid: 4242,
+                    window_id: 99,
+                    bounds: { width: 1200, height: 835 },
+                    is_on_screen: true,
+                    on_current_space: true,
+                  }],
+                },
+              },
+            }],
+          }
+        }
+        return {
+          results: [{
+            result: {
+              isError: true,
+              content: [{ type: 'text', text: 'browser_consent_required: existing-profile grant is missing' }],
+            },
+          }],
+        }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-test',
+    url: 'http://127.0.0.1:8765/#/home',
+    profile: { mode: 'existing_profile' },
+    selectWindow: windows => runner.selectContentWindow(windows),
+  })
+  assert.equal(execution.fatal, true)
+  assert.match(execution.response, /browser_consent_required/)
+})
+
+test('existing profile opens a browser only when no suitable window exists', async () => {
+  let opens = 0
+  let listed = 0
+  const values = {
+    browser_prepare: { prepared_pid: 4242 },
+    get_browser_state: { target_id: 'bt-existing', tabs: [{ active: true, tab_id: 'tab-existing' }] },
+    browser_navigate: { status: 'ok' },
+    bring_to_front: {},
+  }
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const call = batch[0]
+        const name = call.name.replace('mcp__cua-driver-mcp__', '')
+        if (name === 'list_windows') {
+          listed += 1
+          const windows = listed === 1
+            ? [{ app_name: 'Safari', pid: 100, window_id: 10, bounds: { width: 1200, height: 835 } }]
+            : [{
+                app_name: 'Google Chrome',
+                pid: 4242,
+                window_id: 99,
+                title: 'New Tab',
+                bounds: { width: 1200, height: 835 },
+                is_on_screen: true,
+                on_current_space: true,
+              }]
+          return { results: [{ result: { isError: false, value: { windows } } }] }
+        }
+        return { results: [{ result: { isError: false, value: values[name] } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-existing',
+    url: 'http://127.0.0.1:8765/#/home',
+    profile: { mode: 'existing_profile' },
+    selectWindow: windows => runner.selectContentWindow(windows),
+    openBrowser: async (profile, restart) => {
+      opens += 1
+      assert.equal(restart, false)
+    },
+  })
+  assert.equal(opens, 1)
+  assert.equal(listed, 2)
+  assert.equal(execution.response, 'Navigated to http://127.0.0.1:8765/#/home')
+})
+
+test('browser wrong-target errors are marked as unrecoverable', async () => {
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name.replace('mcp__cua-driver-mcp__', '')
+        if (name === 'list_windows') {
+          return {
+            results: [{
+              result: {
+                isError: false,
+                value: {
+                  windows: [{
+                    app_name: 'Google Chrome',
+                    pid: 4242,
+                    window_id: 99,
+                    bounds: { width: 1200, height: 835 },
+                    is_on_screen: true,
+                    on_current_space: true,
+                  }],
+                },
+              },
+            }],
+          }
+        }
+        return {
+          results: [{
+            result: {
+              isError: true,
+              content: [{ type: 'text', text: 'browser_wrong_target_refused: the approved Google Chrome window has no exact New Tab button' }],
+            },
+          }],
+        }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-test',
+    url: 'http://127.0.0.1:8765/#/home',
+    profile: { mode: 'existing_profile' },
+    selectWindow: windows => runner.selectContentWindow(windows),
+    openBrowser: async () => {},
+  })
+  assert.equal(execution.fatal, true)
+  assert.match(execution.response, /browser_wrong_target_refused/)
+})
 
 test('browser input uses the grounding coordinates without another model rewrite', async t => {
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
@@ -539,6 +796,7 @@ test('browser navigation recovery reuses the existing isolated tab', async () =>
   assert.equal(execution.pageTarget, existing)
   assert.deepEqual(calls.map(call => call.name), [
     'mcp__cua-driver-mcp__browser_navigate',
+    'mcp__cua-driver-mcp__get_window_state',
     'mcp__cua-driver-mcp__bring_to_front',
   ])
   assert.deepEqual(JSON.parse(calls[0].arguments), {

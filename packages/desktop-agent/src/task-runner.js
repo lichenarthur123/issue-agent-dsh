@@ -373,6 +373,7 @@ export class DesktopTaskRunner {
           return this.selectContentWindow(windows)
         },
         existing: this.pageTarget,
+        profile: this.settings.browserProfile,
       })
       if (execution.pageTarget) {
         this.pageTarget = execution.pageTarget
@@ -488,6 +489,7 @@ export class DesktopTaskRunner {
         thinkingEffort: this.settings.thinkingEffort ?? 'medium',
         observationMode: this.settings.observationMode ?? 'hybrid',
         coordinateSpace: this.settings.executorCoordinateSpace ?? 'pixels',
+        plannerEnabled: this.settings.plannerEnabled ?? false,
       })
       const verifier = new VlVerifier(this.ctx, this.settings.executor)
       const request = [record.issue.title, record.issue.body].filter(Boolean).join('\n\n').trim()
@@ -504,10 +506,12 @@ export class DesktopTaskRunner {
       let finalBlocked = false
       let unchangedCount = 0
 
-      log.exec(`observation mode: ${this.settings.observationMode ?? 'hybrid'} | thinking mode: ${thinkingMode}`)
-      log.plan('expanding the execution plan')
-      const plan = await this.withHeartbeat(agent, () => planner.expand(record, observation, this.operation.signal))
-      logNode('plan', `plan: ${plan}`, Number.POSITIVE_INFINITY)
+      log.exec(`observation mode: ${this.settings.observationMode ?? 'hybrid'} | thinking mode: ${thinkingMode} | planner: ${this.settings.plannerEnabled ? 'enabled' : 'disabled'}`)
+      const plan = this.settings.plannerEnabled
+        ? await this.withHeartbeat(agent, () => planner.expand(record, observation, this.operation.signal))
+        : null
+      if (plan) logNode('plan', `plan: ${plan}`, Number.POSITIVE_INFINITY)
+      else log.plan('planner disabled: using the original task directly')
 
       for (let index = 0; index < this.settings.maxSteps; index += 1) {
         if (this.operation.signal.aborted) throw new Error('task was cancelled')
@@ -584,6 +588,7 @@ export class DesktopTaskRunner {
             current.value && `value=${current.value}`,
           ].filter(Boolean).join(' | '), 400)
           const execution = await this.executeDecision(agent, current, observation)
+          if (execution.fatal) throw new Error(execution.response || 'navigation failed')
           const step = { decision: current, execution: summarizeExecution(execution) }
           logNode('exec', [
             `step ${steps.length + 1} ${step.execution.status}`,
@@ -677,7 +682,9 @@ export class DesktopTaskRunner {
         `duration=${Date.now() - startedAt}ms`,
         failure ? failure.code : finalBlocked ? 'blocked' : finalResponse,
       ].join(' | '), 400)
-      if (succeeded) await this.closePageSession(agent)
+      if (succeeded && this.settings.browserProfile?.mode !== 'existing_profile') {
+        await this.closePageSession(agent)
+      }
 
       agent[PRESERVE_WINDOWS_ON_FAILURE] = Boolean(this.settings.keepWindowsOnFailure && !succeeded)
       await this.ctx.sessions.flush(agent.session)
@@ -690,7 +697,7 @@ export class DesktopTaskRunner {
         status,
         answer: finalResponse || result?.answer || '',
         plan: [
-          plan,
+          plan ?? 'Planner disabled; executed directly from the original task.',
           steps.length
             ? `Executed:\n${steps.map((step, index) => `${index + 1}. ${step.decision.action}`).join('\n')}`
             : 'No desktop actions required.',

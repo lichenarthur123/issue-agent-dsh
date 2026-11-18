@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { callCuaTool, ensureWindowVisible } from '../../packages/desktop-agent/src/window.js'
+import { callCuaTool, ensureWindowVisible, renderElements } from '../../packages/desktop-agent/src/window.js'
 
 function harness(handler) {
   const calls = []
@@ -145,4 +145,46 @@ test('a visible window under a same-app popup is accepted without repair', async
   }))
   await ensureWindowVisible(ctx, {}, { pid: 85726, window_id: 8228 })
   assert.deepEqual(calls.map(call => call.name), ['mcp__cua-driver-mcp__bring_to_front'])
+})
+
+test('AX rendering keeps actionable controls and a small amount of context', () => {
+  const text = renderElements([
+    { element_index: 0, role: 'AXWindow', label: 'SKU 上架' },
+    { element_index: 1, role: 'AXButton', label: '保存', element_token: 's:1', frame: { x: 1, y: 2, w: 50, h: 20 } },
+    { element_index: 2, role: 'AXStaticText', label: '保存成功', frame: { x: 1, y: 40, w: 100, h: 20 } },
+    { element_index: 3, role: 'AXTextField', label: '商品名称', value: '成人纸尿裤', element_token: 's:3', focused: true },
+    { element_index: 4, role: 'AXButton', label: '隐藏按钮', element_token: 's:4', hidden: true },
+    { element_index: 5, role: 'AXButton', label: '无 token 按钮' },
+    { element_index: 6, role: 'AXStaticText', label: '可点击文本', element_token: 's:6', actions: ['AXPress'] },
+  ])
+  assert.match(text, /Controls:/)
+  assert.match(text, /Button "保存"/)
+  assert.match(text, /TextField "商品名称" value="成人纸尿裤" focused/)
+  assert.match(text, /StaticText "可点击文本"/)
+  assert.match(text, /Context:/)
+  assert.match(text, /Window "SKU 上架"/)
+  assert.match(text, /保存成功/)
+  assert.doesNotMatch(text, /隐藏按钮/)
+  assert.doesNotMatch(text, /无 token 按钮/)
+})
+
+test('AX rendering enforces its budget and reports omitted controls', () => {
+  const elements = Array.from({ length: 100 }, (_, index) => ({
+    element_index: index,
+    role: 'AXButton',
+    label: `按钮${index}`,
+    element_token: `s:${index}`,
+  }))
+  const text = renderElements(elements, { maxChars: 300, contextMaxChars: 100 })
+  assert.ok(text.length <= 300)
+  assert.match(text, /\.\.\. omitted \d+ controls/)
+})
+
+test('AX rendering deduplicates identical controls but preserves distinct positions', () => {
+  const text = renderElements([
+    { element_index: 1, role: 'AXButton', label: '删除', element_token: 's:1', frame: { x: 0, y: 0, w: 40, h: 20 } },
+    { element_index: 2, role: 'AXButton', label: '删除', element_token: 's:2', frame: { x: 0, y: 0, w: 40, h: 20 } },
+    { element_index: 3, role: 'AXButton', label: '删除', element_token: 's:3', frame: { x: 0, y: 100, w: 40, h: 20 } },
+  ])
+  assert.equal(text.match(/Button "删除"/g).length, 2)
 })

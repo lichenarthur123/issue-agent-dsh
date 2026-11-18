@@ -8,6 +8,7 @@ function route(config, env, prefix, fallback) {
 }
 
 export function resolveDesktopSettings(config = {}, env = process.env) {
+  const browserProfileMode = env.DESKTOP_BROWSER_PROFILE_MODE ?? config.browserProfileMode ?? 'existing_profile'
   const executor = route(config.executor ?? {}, env, 'EXECUTOR', {
     provider: 'spark-executor',
     model: 'qwen3.8-27b-nvfp4',
@@ -23,6 +24,17 @@ export function resolveDesktopSettings(config = {}, env = process.env) {
       provider: 'spark-executor',
       model: 'qwen3.8-27b-nvfp4',
     }),
+    plannerEnabled: env.DESKTOP_PLANNER_ENABLED === undefined
+      ? config.plannerEnabled ?? false
+      : env.DESKTOP_PLANNER_ENABLED === 'true',
+    browserProfile: {
+      mode: ['isolated_new', 'isolated_named', 'existing_profile'].includes(browserProfileMode)
+        ? browserProfileMode
+        : 'existing_profile',
+      name: env.DESKTOP_BROWSER_PROFILE_NAME ?? config.browserProfileName ?? 'issue-agent',
+      app: env.BROWSER_APP ?? config.browserApp ?? 'Google Chrome',
+      lang: env.BROWSER_LANG ?? config.browserLang ?? 'en-US',
+    },
     executor,
     executorCoordinateSpace: executor.coordinateSpace,
     maxSteps: Number(env.DESKTOP_MAX_STEPS ?? config.maxSteps ?? 50),

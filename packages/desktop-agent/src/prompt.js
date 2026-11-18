@@ -1,13 +1,17 @@
 import { renderHistory } from './history.js'
 import { budgetBytes, budgetText, PROMPT_LIMITS, SCREENSHOT_PROMPT_BUDGET, textBytes } from './prompt-budget.js'
 
-export function executorSystem(observationMode = 'hybrid', coordinateSpace = 'pixels') {
+export function executorSystem(observationMode = 'hybrid', coordinateSpace = 'pixels', { plannerEnabled = false } = {}) {
   const screenshotOnly = observationMode === 'screenshot'
   return [
   'You are the desktop executor for a macOS computer-use agent.',
-  screenshotOnly
-    ? 'The planner already expanded the task into a complete plan. Read the current screenshot; no accessibility tree is provided in this mode. Issue exactly one action per round.'
-    : 'The planner already expanded the task into a complete plan. Read the current screenshot and AX tree, then issue exactly one action per round.',
+  plannerEnabled
+    ? screenshotOnly
+      ? 'The planner already expanded the task into a complete plan. Read the current screenshot; no accessibility tree is provided in this mode. Issue exactly one action per round.'
+      : 'The planner already expanded the task into a complete plan. Read the current screenshot and AX tree, then issue exactly one action per round.'
+    : screenshotOnly
+      ? 'Read the original task and the current screenshot. No planner expands the task, and no accessibility tree is provided in this mode. Issue exactly one action per round.'
+      : 'Read the original task, the current screenshot, and the AX tree. No planner expands the task. Issue exactly one action per round.',
   'Return only a JSON object with: done, blocked, kind, action, url, target, value, locate, response. To run several predictable steps in one round, instead return {"actions": [up to 3 such decision objects]}.',
   'kind=navigate opens or reloads a website: url holds the full http(s) URL and the runtime prepares and binds the browser window itself, so never click the address bar.',
   'kind=launch starts a desktop application: target holds the application name or bundle id, for example Lark or com.apple.calculator. The runtime resolves it against the installed applications, so never invent a bundle id; <running-apps> lists the applications that already have a process.',
@@ -29,9 +33,13 @@ export function executorSystem(observationMode = 'hybrid', coordinateSpace = 'pi
   coordinateSpace === 'normalized_1000'
     ? 'When locate=ground include your best rough "point": [x, y] estimate using normalized coordinates in the range 0-1000 relative to the screenshot width and height, NOT pixels: x = 1000 * targetX / screenshotWidth, y = 1000 * targetY / screenshotHeight. It does not need to be exact: the runtime converts it to pixels, and the grounding model receives the full screenshot plus this reference point and refines it to the precise coordinate, so a rough area is enough and prevents confusing identical text elsewhere on the page.'
     : 'When locate=ground include your best rough "point": [x, y] estimate of the target in pixels of the current screenshot (see <screenshot-size>). It does not need to be exact: the grounding model receives the full screenshot plus this reference point and refines it to the precise coordinate, so a rough area is enough and prevents confusing identical text elsewhere on the page.',
-  screenshotOnly
-    ? 'Follow the plan milestone by milestone and adapt to the real screen. Before submitting a form, confirm from the current screenshot that every required field is filled.'
-    : 'Follow the plan milestone by milestone and adapt to the real screen. Before submitting a form, confirm from the current AX text that every required field is filled.',
+  plannerEnabled
+    ? screenshotOnly
+      ? 'Follow the plan milestone by milestone and adapt to the real screen. Before submitting a form, confirm from the current screenshot that every required field is filled.'
+      : 'Follow the plan milestone by milestone and adapt to the real screen. Before submitting a form, confirm from the current AX text that every required field is filled.'
+    : screenshotOnly
+      ? 'Work directly from the original task and adapt to the real screen. Before submitting a form, confirm from the current screenshot that every required field is filled.'
+      : 'Work directly from the original task and adapt to the real screen. Before submitting a form, confirm from the current AX text that every required field is filled.',
   'When a result or feedback reports a failure, change approach, for example switch locate or use another visible label, instead of repeating the identical action.',
   'If a single click on a row, card, or record does not open it, do not click it again: try kind=double_click or kind=right_click, or use the expand/open control next to it.',
   'When select fails and lists the actual offered options, issue a new select with the closest offered option; use the reported current value to keep it.',
@@ -59,10 +67,7 @@ function buildHybridExecutorPrompt({
     budgetText(request, PROMPT_LIMITS.task),
     '</original-task>',
     '',
-    '<execution-plan>',
-    budgetText(plan, PROMPT_LIMITS.plan),
-    '</execution-plan>',
-    '',
+    ...plan ? ['<execution-plan>', budgetText(plan, PROMPT_LIMITS.plan), '</execution-plan>', ''] : [],
     renderHistory(history),
     '',
   ]
@@ -112,10 +117,7 @@ function buildScreenshotExecutorPrompt({
     state.request,
     '</original-task>',
     '',
-    '<execution-plan>',
-    state.plan,
-    '</execution-plan>',
-    '',
+    ...state.plan ? ['<execution-plan>', state.plan, '</execution-plan>', ''] : [],
     historyText,
     '',
     ...fixed,

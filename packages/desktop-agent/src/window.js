@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { log } from './log.js'
+import { clip, PROMPT_LIMITS } from './prompt-budget.js'
 import { CUA_TOOL_PREFIX, toolErrorText } from './results.js'
 
 const runCommand = promisify(execFile)
@@ -118,10 +119,63 @@ export async function ensureWindowVisible(ctx, agent, window, { reactivate = rea
   throw lastError ?? new Error('the target window could not be made visible')
 }
 
-const SKIP_ROLE = /^(AX)?(MenuBar|MenuBarItem|Group|ScrollArea|ScrollBar|LayoutArea|LayoutItem|SplitGroup|Splitter|Toolbar|Ruler|GrowArea|BusyIndicator|ColorWell|LevelIndicator|Popover|Sheet|Drawer)$/i
-const INTERACTIVE_ROLE = /Button|Link|MenuItem|PopUp|ComboBox|CheckBox|RadioButton|Tab|TextField|TextArea|SearchField|Incrementor|Slider|Stepper|Heading|StaticText|Image|Cell|Row|Outline|Table|List|WebArea|Window|ValueIndicator|DisclosureTriangle/i
+const SKIP_ROLE = /^(AX)?(MenuBar|MenuBarItem|Group|ScrollBar|LayoutArea|LayoutItem|SplitGroup|Splitter|Toolbar|Ruler|GrowArea|BusyIndicator|ColorWell|LevelIndicator|Popover|Sheet|Drawer)$/i
+const CONTROL_ROLE = /Button|Link|MenuItem|PopUp|ComboBox|CheckBox|RadioButton|Tab|TextField|TextArea|SearchField|Incrementor|Slider|Stepper|DisclosureTriangle/i
+const SUPPORT_ROLE = /^(AX)?(Menu|ScrollArea)$/i
+const ACTIONABLE_TEXT_ROLE = /StaticText|Image|Row|Cell/i
+const CONTEXT_ROLE = /StaticText|Heading/i
 
-export function renderElements(elements = []) {
+function normalizeText(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function visibleElement(element) {
+  if (element.enabled === false || element.hidden === true || element.offscreen === true || element.visible === false) return false
+  const frame = element.frame
+  return !frame || (frame.w !== 0 && frame.h !== 0)
+}
+
+function hasPressAction(element) {
+  return Array.isArray(element.actions) && element.actions.some(action => /press/i.test(action))
+}
+
+function formatElement(element) {
+  const role = String(element.role ?? '').replace(/^AX/, '')
+  const label = clip(normalizeText(element.label), 80)
+  const value = clip(normalizeText(element.value), 120)
+  const parts = [role]
+  if (label) parts.push(`"${label}"`)
+  if (value && value !== label) parts.push(`value="${value}"`)
+  if (element.selected) parts.push('selected')
+  if (element.focused === true || element.focus === true) parts.push('focused')
+  return parts.join(' ')
+}
+
+function pushUnique(lines, keys, line, key) {
+  if (keys.has(key)) return
+  keys.add(key)
+  lines.push(line)
+}
+
+function renderSection(title, lines, maxChars, unit) {
+  if (lines.length === 0) return ''
+  const included = []
+  let size = title.length
+  for (const line of lines) {
+    if (size + 1 + line.length > maxChars) break
+    included.push(line)
+    size += 1 + line.length
+  }
+  let omitted = lines.length - included.length
+  while (omitted > 0 && included.length > 0 && [title, ...included, `... omitted ${omitted} ${unit}`].join('\n').length > maxChars) {
+    included.pop()
+    omitted += 1
+  }
+  if (omitted > 0) included.push(`... omitted ${omitted} ${unit}`)
+  return [title, ...included].join('\n')
+}
+
+export function renderElements(elements = [], { maxChars = PROMPT_LIMITS.ax, contextMaxChars = PROMPT_LIMITS.axContext } = {}) {
   const byIndex = new Map(elements.map(element => [element.element_index, element]))
   const inMenuBar = new Set()
   for (const element of elements) {
@@ -134,23 +188,40 @@ export function renderElements(elements = []) {
       parent = byIndex.get(parent.parent_index)
     }
   }
-  const lines = []
+  const controls = []
+  const controlKeys = new Set()
+  const context = []
+  const contextKeys = new Set()
+  let windowTitle = ''
+  const focused = []
   for (const element of elements) {
-    if (inMenuBar.has(element.element_index)) continue
+    if (inMenuBar.has(element.element_index) || !visibleElement(element)) continue
     const role = element.role ?? ''
     if (SKIP_ROLE.test(role)) continue
-    if (!INTERACTIVE_ROLE.test(role)) continue
-    if (element.enabled === false) continue
-    const label = String(element.label ?? '').replace(/\s+/g, ' ').trim()
-    const value = typeof element.value === 'string' ? element.value.replace(/\s+/g, ' ').trim() : ''
+    const label = normalizeText(element.label)
+    const value = normalizeText(element.value)
     if (!label && !value) continue
-    const parts = [role]
-    if (label) parts.push(`"${label}"`)
-    if (value && value !== label) parts.push(`value="${value}"`)
-    if (element.selected) parts.push('selected')
-    lines.push(`${'  '.repeat(Math.min(element.depth ?? 0, 8))}${parts.join(' ')}`)
+    if (/^(AX)?Window$/i.test(role)) {
+      windowTitle = clip(label || value, 200)
+      continue
+    }
+    const formatted = formatElement(element)
+    if (element.focused === true || element.focus === true) focused.push(formatted)
+    const key = `${role}|${label}|${value}|${element.frame?.x ?? ''},${element.frame?.y ?? ''},${element.frame?.w ?? ''},${element.frame?.h ?? ''}`
+    if (element.element_token && (CONTROL_ROLE.test(role) || SUPPORT_ROLE.test(role) || (ACTIONABLE_TEXT_ROLE.test(role) && hasPressAction(element)))) {
+      pushUnique(controls, controlKeys, formatted, key)
+    } else if (CONTEXT_ROLE.test(role)) {
+      pushUnique(context, contextKeys, clip(label || value, 160), `${label}|${value}`)
+    }
   }
-  return lines.join('\n')
+  const contextLines = [
+    ...windowTitle ? [`Window "${windowTitle}"`] : [],
+    ...focused.map(line => `Focused: ${line}`),
+    ...context,
+  ]
+  const contextText = renderSection('Context:', contextLines, contextMaxChars, 'context lines')
+  const controlsText = renderSection('Controls:', controls, Math.max(0, maxChars - (contextText ? contextText.length + 2 : 0)), 'controls')
+  return [controlsText, contextText].filter(Boolean).join('\n\n')
 }
 
 export async function captureWindow(ctx, agent, { pid, window_id, maxElements = 100, crop = null }) {

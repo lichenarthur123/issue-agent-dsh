@@ -10,6 +10,7 @@
 - 模型：`qwen3.8-27b-nvfp4`
 - 观察模式：默认 `screenshot`
 - 坐标空间：默认 `pixels`
+- Planner 扩写：默认关闭（`plannerEnabled=false`），原始任务直接进入 Executor
 - 代码入口：`packages/desktop-agent/src/executor.js`
 - prompt 生成：`packages/desktop-agent/src/prompt.js`
 - 响应解析：`packages/desktop-agent/src/planner.js` 中的 `parsePlannerDecision()`
@@ -63,7 +64,7 @@ POST http://10.10.10.1:8005/v1/chat/completions
 
 ### 3.1 system message
 
-system 是固定规则文本，由 `executorSystem('screenshot', 'pixels')` 生成。完整内容见附录 A。
+system 是固定规则文本，默认由 `executorSystem('screenshot', 'pixels', { plannerEnabled: false })` 生成。完整内容见附录 A。开启 Planner 时，规则会改为读取 Planner 已扩写的计划。
 
 screenshot 模式下，system 的 UTF-8 字节预算为 4800B，当前实际约 4673B。
 
@@ -74,7 +75,7 @@ user 文本按以下顺序拼接；空的可选段不会出现：
 ```text
 <original-task>原始任务</original-task>
 
-<execution-plan>Planner 生成的完整计划</execution-plan>
+<execution-plan>可选：仅 plannerEnabled=true 时注入的完整计划</execution-plan>
 
 <history>最近若干步的 JSON 历史</history>
 <history-summary>更早步骤的摘要，可选</history-summary>
@@ -124,7 +125,9 @@ screenshot 模式：
 
 没有可用截图时可以只发送 text。图片预算不在本文的文本预算范围内。
 
-### 3.4 一个真实形态的 user 文本示例
+### 3.4 plannerEnabled=true 时的 user 文本示例
+
+默认 `plannerEnabled=false` 时，下面的 `<execution-plan>` 整段不会出现，其余结构不变。
 
 ```text
 <original-task>
@@ -173,7 +176,7 @@ Decide the single next atomic action from the current screen. Return only the JS
       "content": [
         {
           "type": "text",
-          "text": "<original-task>\n打开计算器，计算 5 + 5，确认界面显示 10，然后回复结果。\n</original-task>\n\n<execution-plan>\n1. 启动计算器\n2. 输入 5 + 5\n3. 确认界面显示 10\n</execution-plan>\n\n<history>[{\"step\":1,\"action\":{\"kind\":\"launch\",\"action\":\"Launch Calculator\",\"target\":\"Calculator\"},\"result\":{\"status\":\"succeeded\",\"summary\":\"Launched Calculator (com.apple.calculator)\"}}]</history>\n\n<current-window>{\"pid\":4242,\"window_id\":99}</current-window>\n\n<screenshot-size>1440x900</screenshot-size>\n\n<running-apps>Calculator(com.apple.calculator)</running-apps>\n\nDecide the single next atomic action from the current screen. Return only the JSON object."
+          "text": "<original-task>\n打开计算器，计算 5 + 5，确认界面显示 10，然后回复结果。\n</original-task>\n\n<history>[{\"step\":1,\"action\":{\"kind\":\"launch\",\"action\":\"Launch Calculator\",\"target\":\"Calculator\"},\"result\":{\"status\":\"succeeded\",\"summary\":\"Launched Calculator (com.apple.calculator)\"}}]</history>\n\n<current-window>{\"pid\":4242,\"window_id\":99}</current-window>\n\n<screenshot-size>1440x900</screenshot-size>\n\n<running-apps>Calculator(com.apple.calculator)</running-apps>\n\nDecide the single next atomic action from the current screen. Return only the JSON object."
         },
         {
           "type": "image_url",
@@ -448,7 +451,7 @@ data: [DONE]
 
 ```text
 You are the desktop executor for a macOS computer-use agent.
-The planner already expanded the task into a complete plan. Read the current screenshot; no accessibility tree is provided in this mode. Issue exactly one action per round.
+Read the original task and the current screenshot. No planner expands the task, and no accessibility tree is provided in this mode. Issue exactly one action per round.
 Return only a JSON object with: done, blocked, kind, action, url, target, value, locate, response. To run several predictable steps in one round, instead return {"actions": [up to 3 such decision objects]}.
 kind=navigate opens or reloads a website: url holds the full http(s) URL and the runtime prepares and binds the browser window itself, so never click the address bar.
 kind=launch starts a desktop application: target holds the application name or bundle id, for example Lark or com.apple.calculator. The runtime resolves it against the installed applications, so never invent a bundle id; <running-apps> lists the applications that already have a process.
@@ -464,7 +467,7 @@ Always set locate="ground": the runtime asks the grounding model for coordinates
 After every action you receive a fresh screenshot. Read the new state before deciding and never repeat an action whose effect is already visible.
 Batching: "actions" runs at most 3 decisions serially in one round, for example filling three inputs, ticking several checkboxes, or filling a field and then scrolling. Only one fresh screenshot is provided after the whole batch, not between its steps, so never batch a step whose next step depends on seeing its result. A failed step cancels the rest of the batch. done and blocked must always be returned as a single decision, never inside actions.
 When locate=ground include your best rough "point": [x, y] estimate of the target in pixels of the current screenshot (see <screenshot-size>). It does not need to be exact: the grounding model receives the full screenshot plus this reference point and refines it to the precise coordinate, so a rough area is enough and prevents confusing identical text elsewhere on the page.
-Follow the plan milestone by milestone and adapt to the real screen. Before submitting a form, confirm from the current screenshot that every required field is filled.
+Work directly from the original task and adapt to the real screen. Before submitting a form, confirm from the current screenshot that every required field is filled.
 When a result or feedback reports a failure, change approach, for example switch locate or use another visible label, instead of repeating the identical action.
 If a single click on a row, card, or record does not open it, do not click it again: try kind=double_click or kind=right_click, or use the expand/open control next to it.
 When select fails and lists the actual offered options, issue a new select with the closest offered option; use the reported current value to keep it.
