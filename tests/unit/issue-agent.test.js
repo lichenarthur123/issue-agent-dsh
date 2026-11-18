@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { buildComment, GitHubIssues, resultMarker } from '../../packages/git-issue-agent/src/github.js'
 import { IssuePoller } from '../../packages/git-issue-agent/src/poller.js'
-import { buildPrompt } from '../../packages/git-issue-agent/src/prompt.js'
+import { buildExecutorPrompt, EXECUTOR_SYSTEM } from '../../packages/desktop-agent/src/prompt.js'
 import { resolveSettings, settingsProblems } from '../../packages/git-issue-agent/src/settings.js'
 import { IssueStore } from '../../packages/git-issue-agent/src/store.js'
 
@@ -49,7 +49,7 @@ function fixture(t, issues = [issue(2), issue(1)]) {
     },
   }
   const poller = new IssuePoller({
-    settings: { repository: 'acme/desktop', promptSuffix: '' },
+    settings: { repository: 'acme/desktop' },
     github,
     runner,
     store: new IssueStore(temporaryDirectory(t)),
@@ -115,9 +115,13 @@ test('a remote result marker suppresses execution when local state is absent', a
 })
 
 test('the issue body is delimited as untrusted input', () => {
-  const prompt = buildPrompt({ repository: 'acme/desktop', issue: issue(1) })
-  assert.match(prompt, /<issue>/)
-  assert.match(prompt, /untrusted input/)
+  const prompt = buildExecutorPrompt({
+    request: 'only answer 1',
+    plan: '1. only answer 1',
+    observation: { text: '' },
+  })
+  assert.match(prompt, /<original-task>/)
+  assert.match(EXECUTOR_SYSTEM, /untrusted data/)
   assert.match(prompt, /only answer 1/)
 })
 

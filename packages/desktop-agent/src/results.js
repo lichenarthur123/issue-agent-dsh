@@ -41,6 +41,7 @@ export function createRunState() {
     agentReason: null,
     toolCalls: 0,
     desktopToolCalls: 0,
+    groundingCalls: 0,
     desktopMutationSeen: false,
     interfaceVerified: false,
     timedOut: false,
@@ -59,6 +60,12 @@ function textFromMessage(message) {
     .join('')
 }
 
+export function toolErrorText(message) {
+  const text = textFromMessage(message).trim()
+  if (message.isError) return text || message.error?.message || 'tool failed'
+  return /^(?:Error:|refused\s*\()/i.test(text) ? text : ''
+}
+
 export function reduceRunEvent(state, event) {
   const data = event.data
   if (event.type === 'assistant/message') {
@@ -67,6 +74,7 @@ export function reduceRunEvent(state, event) {
   } else if (event.type === 'tool/call') {
     state.toolCalls += 1
     state.calls.set(data.callId, data.name)
+    if (data.name === 'desktop_ground_ui') state.groundingCalls += 1
     if (data.name.startsWith(CUA_TOOL_PREFIX)) {
       state.desktopToolCalls += 1
       const tool = data.name.slice(CUA_TOOL_PREFIX.length)
@@ -79,11 +87,11 @@ export function reduceRunEvent(state, event) {
     const name = state.calls.get(data.message.toolCallId)
     if (name?.startsWith(CUA_TOOL_PREFIX)) {
       const tool = name.slice(CUA_TOOL_PREFIX.length)
-      if (data.message.isError) {
-        const text = textFromMessage(data.message)
-        if (text.includes('DESKTOP_BUSY')) state.desktopBusy = true
-        if (text.includes('POLICY_DENIED')) {
-          state.policyDenials.push({ tool, message: text.slice(0, 500) })
+      const errorText = toolErrorText(data.message)
+      if (errorText) {
+        if (errorText.includes('DESKTOP_BUSY')) state.desktopBusy = true
+        if (errorText.includes('POLICY_DENIED')) {
+          state.policyDenials.push({ tool, message: errorText.slice(0, 500) })
         }
       } else {
         state.desktopBusy = false
@@ -152,6 +160,7 @@ export function buildTaskResult(state, sessionId, artifactDir, startedAt) {
     },
     toolCalls: state.toolCalls,
     desktopToolCalls: state.desktopToolCalls,
+    groundingCalls: state.groundingCalls,
     policy: { denials: state.policyDenials },
     cleanup: state.cleanup ?? null,
     error: taskError(state, status),

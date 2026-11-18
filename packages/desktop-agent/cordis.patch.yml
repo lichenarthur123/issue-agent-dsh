@@ -4,7 +4,22 @@
       config:
         artifactRoot: artifacts/native
         lockFile: artifacts/desktop.lock
-        taskTimeoutMs: 600000
+        taskTimeoutSeconds: 600
+        planner:
+          provider: spark-executor
+          model: qwen3.8-27b-nvfp4
+        executor:
+          provider: spark-executor
+          model: qwen3.8-27b-nvfp4
+        maxSteps: 50
+        observationMode: screenshot
+        thinkingMode: always
+        thinkingEffort: low
+        groundingMode: auto
+        keepWindowsOnFailure: true
+        grounder:
+          baseURL: http://10.10.10.1:8003/v1
+          model: ui-tars-1.5-7b
         budget:
           maxDesktopCalls: 400
           maxObservationCalls: 120

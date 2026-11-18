@@ -57,6 +57,13 @@ const child = spawn('dsh', ['--profile', 'issue-agent'], {
     GITHUB_POLL_INTERVAL_SECONDS: '5',
     AGENT_STATE_DIR: stateDir,
     AGENT_TASK_TIMEOUT_SECONDS: '120',
+    DESKTOP_LOCAL_API_KEY: 'local',
+    ...(process.env.E2E_USE_LOCAL === '1' ? {} : {
+      DESKTOP_PLANNER_PROVIDER: 'alicloud',
+      DESKTOP_PLANNER_MODEL: 'deepseek-v4.1-flash',
+      DESKTOP_EXECUTOR_PROVIDER: 'alicloud',
+      DESKTOP_EXECUTOR_MODEL: 'deepseek-v4.1-flash',
+    }),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
@@ -77,6 +84,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 5500))
   assert.ok(polls >= 2)
   assert.equal(comments.length, 1, 'a later poll must not rerun or recomment the issue')
+  if (process.env.E2E_VERBOSE === '1') console.error(output)
   console.log(`PASS: poll -> DSH Agent -> issue comment; ${polls} polls, one Agent run`)
 } finally {
   child.kill('SIGTERM')

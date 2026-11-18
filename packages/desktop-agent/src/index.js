@@ -1,20 +1,27 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { DesktopBudget } from './budget.js'
-import { DesktopCleanup } from './cleanup.js'
+import { DesktopCleanup, PRESERVE_WINDOWS_ON_FAILURE } from './cleanup.js'
+import { registerGrounder } from './grounder.js'
 import { DesktopMutex } from './mutex.js'
 import { createPolicy } from './policy.js'
 import { buildTaskResult, createRunState, CUA_TOOL_PREFIX, reduceRunEvent } from './results.js'
+import { resolveDesktopSettings } from './settings.js'
+import { DesktopTaskRunner } from './task-runner.js'
 
-export const inject = ['agents', 'sessions', 'systemPrompt', 'tools']
+export const inject = ['agents', 'sessions', 'systemPrompt', 'tools', 'llm', 'attachments']
 
 export function apply(ctx, config = {}) {
-  const artifactRoot = resolve(config.artifactRoot ?? 'artifacts/native')
+  const settings = resolveDesktopSettings(config)
+  const artifactRoot = settings.artifactRoot
   const mutex = new DesktopMutex(config.lockFile ?? 'artifacts/desktop.lock')
   const policy = createPolicy(config.policy)
-  const taskTimeoutMs = config.taskTimeoutMs ?? 600000
+  const taskTimeoutMs = settings.taskTimeoutMs
   const budgetConfig = config.budget ?? {}
   const active = new Map()
+  const taskRunner = new DesktopTaskRunner(ctx, settings)
+  ctx.reflect.provide('desktopTasks', taskRunner)
+  registerGrounder(ctx, settings)
 
   ctx.systemPrompt.section({
     name: 'desktop-cua-task',
@@ -23,19 +30,11 @@ export function apply(ctx, config = {}) {
     text: [
       'Operate the desktop only through the Cua Driver MCP tools.',
       'Do not use shell, file, or browser substitutes to bypass desktop observation or action.',
-      'Minimize tool calls: prefer one batched input (type_text, hotkey, or a full shortcut) over per-key clicks, and do not re-observe while the current state is already known.',
-      'For text or number entry, send the whole value in one type_text call, and use press_key or hotkey for actions instead of clicking individual keys.',
-      'Take at most one snapshot to locate the target and one after the final change to verify; do not snapshot between individual actions.',
-      `Keep every observation at max_elements <= ${budgetConfig.maxObservationElements ?? 150}; read the current viewport in small chunks instead of requesting a whole page.`,
-      `The per-task budget is ${budgetConfig.maxDesktopCalls ?? 40} desktop calls and ${budgetConfig.maxObservationCalls ?? 12} observations; reserve one final observation for verification.`,
-      'Bring the target window to the front before keyboard input when the app launched in the background.',
-      'If an action produces no visible change, change approach (bring_to_front or foreground delivery) instead of repeating the same call; never repeat an identical failing call more than twice.',
-      'After the final change, obtain one fresh window or desktop snapshot and verify the requested state before reporting success.',
-      'Before the final response, close every browser tab you opened with cmd+w and restore any pre-existing tab you navigated away from; never close pre-existing tabs.',
-      'The plugin closes newly opened windows and newly launched applications after the turn; leave unsaved changes prompts untouched.',
-      'If the desktop is busy, a tool is unavailable, or verification fails, report the failure instead of claiming success.',
-      'A POLICY_DENIED tool result is final: do not retry it, and report which action the policy blocked.',
-      'On CONTEXT_BUDGET exhaustion, stop all tool calls and return a clearly marked partial result.',
+      'Prefer AX element_token addressing over pixel coordinates; use desktop_ground_ui only when AX cannot identify the target.',
+      'Never invent pid, window_id, or element identifiers; only use values returned by Cua Driver.',
+      'The task runner fronts the target window before input and verifies the final state before reporting success.',
+      'A POLICY_DENIED or budget denial is final: do not retry it, report which action was blocked.',
+      'The plugin cleans up windows and applications it opened after success; failed tasks may preserve them for debugging.',
     ].join('\n'),
   })
 
@@ -94,7 +93,9 @@ export function apply(ctx, config = {}) {
       }
     })
     agent.ctx.effect(() => async () => {
-      state.cleanup = await cleanup.restore()
+      state.cleanup = agent[PRESERVE_WINDOWS_ON_FAILURE]
+        ? { status: 'preserved', reason: 'task failed or incomplete' }
+        : await cleanup.restore()
       writeResult()
     })
 

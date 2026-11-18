@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildTaskResult, createRunState, reduceRunEvent } from '../../packages/desktop-agent/src/results.js'
+import { buildTaskResult, createRunState, reduceRunEvent, toolErrorText } from '../../packages/desktop-agent/src/results.js'
 
 const sessionId = 'session-test'
+
+test('a refused tool result is an error even when isError is false', () => {
+  const message = {
+    isError: false,
+    content: [{ type: 'text', text: 'refused (browser_consent_required): attachment is not authorized' }],
+  }
+  assert.match(toolErrorText(message), /browser_consent_required/)
+})
 
 test('a fresh observation after a desktop action provides interface-level verification', () => {
   const state = createRunState()

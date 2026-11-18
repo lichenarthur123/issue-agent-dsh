@@ -5,6 +5,4 @@
         pollIntervalSeconds: 60
         triggerLabel: agent:desktop
         maxIssuesPerPoll: 20
-        taskTimeoutSeconds: 600
         stateDir: artifacts/issue-agent
-        artifactRoot: artifacts/native

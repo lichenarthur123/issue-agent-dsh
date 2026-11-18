@@ -5,6 +5,7 @@
 
 # 任务产物与截图
 artifacts/
+log/
 
 # 依赖与构建
 .tools/

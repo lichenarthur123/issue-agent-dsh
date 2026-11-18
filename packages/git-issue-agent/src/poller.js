@@ -1,5 +1,6 @@
 import { buildComment } from './github.js'
-import { issueKey } from './prompt.js'
+
+const issueKey = (repository, issueNumber) => `${repository}#${issueNumber}`
 
 export class IssuePoller {
   constructor({ settings, github, runner, store, logger = console }) {

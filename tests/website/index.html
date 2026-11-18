@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AmaShop · 电商仿真平台</title>
+  <style>
+    :root{--navy:#131921;--navy2:#232f3e;--orange:#ff9900;--yellow:#febd69;--blue:#007185;--link:#007185;--ink:#0f1111;--muted:#565959;--line:#d5d9d9;--bg:#eaeded;--green:#067d62;--red:#b12704}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Arial,"PingFang SC","Microsoft YaHei",sans-serif}a{color:var(--link);text-decoration:none}a:hover{color:#c7511f;text-decoration:underline}button,input,select,textarea{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #92d9e4;outline-offset:2px}
+    .topbar{display:flex;align-items:center;gap:18px;padding:12px 24px;background:var(--navy);color:#fff}.logo{font-size:25px;font-weight:700;color:#fff}.logo span{color:var(--orange)}.location{white-space:nowrap;color:#d8dfe3;font-size:12px}.search{display:flex;flex:1;max-width:850px;height:40px}.search input{min-width:0;flex:1;border:0;border-radius:5px 0 0 5px;padding:0 12px;font-size:15px}.search button{width:52px;border:0;border-radius:0 5px 5px 0;background:var(--yellow);font-size:20px}.account{color:#fff;font-size:12px}.account strong{display:block;font-size:14px}.cart-link{color:#fff;font-size:15px;font-weight:700;white-space:nowrap}.cart-count{display:inline-grid;place-items:center;min-width:23px;height:23px;border-radius:50%;background:var(--orange);color:var(--navy)}
+    .subnav{display:flex;gap:22px;padding:8px 24px;background:var(--navy2);color:#fff}.subnav a{color:#fff;font-size:13px}.subnav a:hover{color:var(--yellow)}.reset{margin-left:auto;color:#d5dbdf;font-size:12px}
+    .container{max-width:1200px;margin:22px auto;padding:0 22px}.page-title{margin:0 0 18px;font-size:27px;font-weight:400}.panel{margin-bottom:20px;padding:20px;border:1px solid var(--line);border-radius:8px;background:#fff}.panel h2{margin:0 0 14px;font-size:20px}.muted{color:var(--muted)}.small{font-size:12px}.text-green{color:var(--green)}.text-red{color:var(--red)}
+    .hero{display:grid;grid-template-columns:1.3fr 1fr;min-height:280px;margin-bottom:20px;border-radius:8px;overflow:hidden;background:#fff}.hero-copy{padding:42px;background:linear-gradient(120deg,#e8f4f6,#f7fbfc)}.hero h1{max-width:520px;margin:0 0 12px;font-size:35px;line-height:1.15}.hero p{max-width:500px;color:#42525a;font-size:16px}.hero-art{display:grid;place-items:center;background:#d9edf0;font-size:110px}.hero-actions{display:flex;gap:12px;margin-top:24px}
+    .btn{min-height:34px;padding:7px 16px;border:1px solid #d5d9d9;border-radius:8px;background:#fff;color:#0f1111;box-shadow:0 1px 2px #0000000d}.btn:hover{background:#f7fafa}.btn-primary{border-color:#f0a742;background:var(--yellow);box-shadow:0 2px 5px #0000001a}.btn-primary:hover{background:#f3b34e}.btn-orange{border-color:#e8890c;background:var(--orange)}.btn-danger{color:var(--red)}.btn-block{width:100%}.btn-small{padding:4px 10px;font-size:12px}.link-btn{padding:0;border:0;background:none;color:var(--link)}
+    .category-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}.category{padding:20px;background:#fff;border:1px solid var(--line);border-radius:8px}.category h3{margin:0 0 14px}.category .emoji{display:block;margin-bottom:16px;font-size:44px}.category a{font-size:13px}
+    .toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:14px}.field{display:grid;gap:6px;margin-bottom:15px}.field label,.field-label{font-weight:700}.field input,.field select,.field textarea,.control{width:100%;padding:8px 10px;border:1px solid #888c8c;border-radius:7px;background:#fff}.field textarea{min-height:110px;resize:vertical}.field input:focus,.field select:focus,.field textarea:focus{border-color:#007185}.field .hint{color:var(--muted);font-size:12px;font-weight:400}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}.three-col{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.inline-check{display:flex;align-items:center;gap:8px}.inline-check input{width:17px;height:17px}
+    .product-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.product-card{display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:8px;background:#fff}.product-art{display:grid;place-items:center;height:185px;font-size:70px}.product-info{display:flex;flex:1;flex-direction:column;padding:16px}.product-name{margin:0 0 8px;font-size:17px;font-weight:400;line-height:1.35}.product-brand{color:var(--muted);font-size:12px}.rating{margin:7px 0;color:#de7921}.rating span{color:var(--blue);font-size:12px}.price{margin-top:auto;font-size:22px}.price sup{font-size:13px}.stock{margin:4px 0 12px;color:var(--green);font-size:12px}.card-actions{display:flex;gap:8px;margin-top:12px}
+    .product-layout{display:grid;grid-template-columns:1fr 1fr;gap:28px}.product-detail-art{display:grid;place-items:center;min-height:400px;border-radius:8px;font-size:135px}.detail-buy{padding:18px;border:1px solid var(--line);border-radius:8px}.detail-buy .price{font-size:28px}.qty{display:flex;align-items:center;gap:10px;margin:15px 0}.qty input{width:65px;padding:7px}.specs{width:100%;border-collapse:collapse;margin-top:15px}.specs td{padding:8px;border-bottom:1px solid #e7e7e7}.specs td:first-child{color:var(--muted)}
+    .cart-row{display:grid;grid-template-columns:90px 1fr 120px 100px;gap:16px;align-items:center;padding:16px 0;border-bottom:1px solid var(--line)}.cart-thumb{display:grid;place-items:center;width:90px;height:90px;font-size:42px}.cart-summary{max-width:340px;margin-left:auto}.summary-line{display:flex;justify-content:space-between;margin:8px 0}.summary-total{padding-top:12px;border-top:1px solid var(--line);font-size:20px;font-weight:700}.empty{padding:45px;text-align:center}.empty .emoji{display:block;margin-bottom:12px;font-size:55px}
+    table{width:100%;border-collapse:collapse}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left}th{background:#f7fafa;color:#42525a;font-size:12px}.order-status{display:inline-block;padding:3px 9px;border-radius:20px;background:#e7f4ef;color:var(--green);font-size:12px}.order-status.shipping{background:#fff4d6;color:#8a5a00}.order-status.done{background:#e9f1fb;color:#265c93}.timeline{display:grid;grid-template-columns:repeat(3,1fr);margin:25px 0}.step{position:relative;padding-top:24px;text-align:center;color:var(--muted);font-size:12px}.step:before{content:"";position:absolute;top:4px;left:50%;width:12px;height:12px;border-radius:50%;background:#c7d0d4;transform:translateX(-50%)}.step.active{color:var(--green)}.step.active:before{background:var(--green)}
+    .dropzone{display:grid;place-items:center;min-height:130px;padding:20px;border:2px dashed #9eb3bb;border-radius:8px;background:#f7fafa;text-align:center}.dropzone.over{border-color:var(--orange);background:#fff8e9}.dropzone input{max-width:100%}
+    dialog{width:min(480px,90vw);border:0;border-radius:10px;padding:25px;box-shadow:0 18px 65px #0006}dialog::backdrop{background:#0b1b2788}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+    .toast{position:fixed;right:25px;bottom:25px;z-index:10;max-width:380px;padding:13px 20px;border-radius:8px;background:#20313c;color:#fff;box-shadow:0 8px 25px #0004;opacity:0;pointer-events:none;transition:opacity .2s}.toast.show{opacity:1}
+    footer{margin-top:35px;padding:30px 22px;background:#fff;border-top:1px solid var(--line)}.footer-inner{max-width:1100px;margin:auto}.test-state{margin-top:18px}.test-state pre{max-height:300px;overflow:auto;padding:14px;background:#14232d;color:#d7e8ee;border-radius:6px;font-size:11px}.footer-links{display:flex;gap:22px}.footer-bottom{margin-top:18px;color:var(--muted);font-size:12px}
+    @media(max-width:900px){.location,.account{display:none}.topbar{gap:10px;padding:10px}.category-grid,.product-grid{grid-template-columns:repeat(2,1fr)}.hero,.product-layout{grid-template-columns:1fr}.hero-art{display:none}.cart-row{grid-template-columns:65px 1fr 85px}.cart-row>:last-child{grid-column:2}.three-col{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}}
+    @media(max-width:560px){.product-grid,.category-grid{grid-template-columns:1fr}.subnav{gap:12px;overflow-x:auto}.subnav a{white-space:nowrap}.panel{padding:14px}.hero-copy{padding:25px}.search{min-width:160px}.logo{font-size:20px}.cart-link{font-size:12px}.toolbar{display:grid;grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="logo" href="#/home">Ama<span>Shop</span></a>
+    <div class="location">配送至<br><strong>上海市</strong></div>
+    <form id="global-search" class="search" role="search">
+      <input id="search-input" aria-label="搜索商品" placeholder="搜索 SKU、品牌或商品名称" data-testid="global-search-input">
+      <button aria-label="提交搜索" data-testid="global-search-submit">⌕</button>
+    </form>
+    <a class="account" href="#/orders">您好，测试用户<br><strong>账户与订单</strong></a>
+    <a class="cart-link" href="#/cart" data-testid="cart-link">购物车 <span id="cart-count" class="cart-count">0</span></a>
+  </header>
+  <nav class="subnav" aria-label="主导航">
+    <a href="#/home">首页</a><a href="#/products">全部 SKU</a><a href="#/publish">SKU 上架</a><a href="#/orders">我的订单</a><a href="#/publish">卖家中心</a>
+    <button id="reset-demo" class="reset link-btn" data-testid="reset-demo">重置演示数据</button>
+  </nav>
+  <main id="app" class="container"></main>
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-links"><a href="#/products">商品中心</a><a href="#/publish">发布商品</a><a href="#/orders">订单帮助</a></div>
+      <details class="test-state" data-testid="test-state"><summary>自动化测试：查看当前业务状态</summary><pre id="state-json"></pre></details>
+      <div class="footer-bottom">AmaShop 是本地仿真网站，不产生真实交易、支付或物流。滚动页面可查看全部内容。</div>
+    </div>
+  </footer>
+  <dialog id="receipt-dialog" data-testid="receipt-dialog">
+    <h2>确认签收</h2><p id="receipt-text"></p><p class="muted">请确认商品包装完好且商品数量正确。此操作只改变本地订单状态。</p>
+    <div class="dialog-actions"><button id="cancel-receipt" class="btn">取消</button><button id="confirm-receipt" class="btn btn-primary" data-testid="confirm-receipt">确认签收</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status"></div>
+  <script>
+    const productsSeed = [
+      {id:'SKU-1001',name:'SoundCore 无线降噪耳机',brand:'SoundCore',category:'数码电子',price:399,stock:28,rating:4.6,reviews:1284,icon:'🎧',color:'#d9edf3',description:'主动降噪、40 小时续航、多设备连接，适合通勤和居家办公。'},
+      {id:'SKU-1002',name:'HomePlus 智能台灯',brand:'HomePlus',category:'家居生活',price:169,stock:56,rating:4.4,reviews:632,icon:'💡',color:'#fff1cc',description:'支持色温调节、定时关闭和低亮度夜灯模式。'},
+      {id:'SKU-1003',name:'Trail 轻便双肩背包',brand:'Trail',category:'服饰箱包',price:219,stock:17,rating:4.7,reviews:918,icon:'🎒',color:'#e3e9df',description:'18L 容量、防泼水面料、独立电脑隔层，适合日常通勤。'},
+      {id:'SKU-1004',name:'Aroma 手冲咖啡套装',brand:'Aroma',category:'厨房用品',price:129,stock:42,rating:4.5,reviews:377,icon:'☕',color:'#eee2d5',description:'包含滤杯、分享壶和量勺，适合 1–2 人份手冲咖啡。'},
+      {id:'SKU-1005',name:'FitBand 运动手环',brand:'FitBand',category:'数码电子',price:199,stock:0,rating:4.2,reviews:2041,icon:'⌚',color:'#e1e8f3',description:'支持心率、睡眠和运动记录，50 米防水。'},
+      {id:'SKU-1006',name:'Cloud 柔软记忆棉枕',brand:'Cloud',category:'家居生活',price:99,stock:31,rating:4.3,reviews:508,icon:'🛏️',color:'#eee8f4',description:'慢回弹记忆棉、透气枕套，可拆洗设计。'},
+    ]
+    const clone = value => JSON.parse(JSON.stringify(value))
+    const storageKey = 'amashop-state-v1'
+    let state
+    try {
+      state = JSON.parse(localStorage.getItem(storageKey)) ?? {products:clone(productsSeed),cart:[],orders:[],lastAction:'初始化'}
+    } catch {
+      state = {products:clone(productsSeed),cart:[],orders:[],lastAction:'初始化'}
+    }
+    state.products ??= clone(productsSeed)
+    state.cart ??= []
+    state.orders ??= []
+    if (!localStorage.getItem(storageKey)) {
+      state.orders.push({id:'A20261001001',createdAt:'2026-10-01 10:30',status:'运输中',customer:'张三',phone:'13800000000',address:'上海市徐汇区测试路 88 号',delivery:'标准配送',items:[{productId:'SKU-1001',qty:1},{productId:'SKU-1004',qty:2}],total:657,signedAt:null})
+    }
+    const app = document.querySelector('#app')
+    const $ = selector => document.querySelector(selector)
+    const money = value => `¥${Number(value).toFixed(2)}`
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))
+    const productById = id => state.products.find(product => product.id === id)
+    const cartCount = () => state.cart.reduce((sum,item) => sum + item.qty,0)
+    const cartTotal = () => state.cart.reduce((sum,item) => sum + productById(item.productId).price * item.qty,0)
+    function save(action) {
+      state.lastAction = action
+      localStorage.setItem(storageKey,JSON.stringify(state))
+      updateChrome()
+    }
+    function toast(message) {
+      const element = $('#toast')
+      element.textContent = message
+      element.classList.add('show')
+      clearTimeout(toast.timer)
+      toast.timer = setTimeout(() => element.classList.remove('show'),2600)
+    }
+    function updateChrome() {
+      $('#cart-count').textContent = cartCount()
+      $('#state-json').textContent = JSON.stringify({cart:state.cart,orders:state.orders,products:state.products.map(({id,name,price,stock}) => ({id,name,price,stock})),lastAction:state.lastAction},null,2)
+    }
+    function art(product,large = false) {
+      return `<div class="${large ? 'product-detail-art' : 'product-art'}" style="background:${product.color}" aria-label="${esc(product.name)}图片"><span>${product.icon}</span></div>`
+    }
+    function productCard(product) {
+      return `<article class="product-card" data-testid="product-${product.id}">
+        <a href="#/product/${product.id}">${art(product)}</a>
+        <div class="product-info"><div class="product-brand">${esc(product.brand)} · ${esc(product.category)}</div>
+        <a class="product-name" href="#/product/${product.id}">${esc(product.name)}</a>
+        <div class="rating">★★★★★ <span>${product.rating} · ${product.reviews} 条评价</span></div>
+        <div class="price"><sup>¥</sup>${Number(product.price).toFixed(2)}</div>
+        <div class="stock ${product.stock === 0 ? 'text-red' : ''}">${product.stock > 0 ? `有货 · 库存 ${product.stock}` : '暂时缺货'}</div>
+        <div class="card-actions"><a class="btn" href="#/product/${product.id}">查看详情</a><button class="btn btn-primary" data-action="add-cart" data-id="${product.id}" ${product.stock === 0 ? 'disabled' : ''}>加入购物车</button></div></div>
+      </article>`
+    }
+    function renderHome() {
+      const featured = state.products.slice(0,3)
+      app.innerHTML = `<section class="hero"><div class="hero-copy"><h1>发现日常所需的每一件好物</h1><p>从数码电子到家居生活，使用完整的 SKU 与订单仿真流程，体验搜索、下单和签收。</p><div class="hero-actions"><a class="btn btn-primary" href="#/products" data-testid="shop-now">立即选购</a><a class="btn" href="#/publish">发布 SKU</a></div></div><div class="hero-art">🛍️</div></section>
+      <section class="category-grid"><article class="category"><span class="emoji">💻</span><h3>数码电子</h3><a href="#/products?category=数码电子">查看耳机与智能设备</a></article><article class="category"><span class="emoji">🏠</span><h3>家居生活</h3><a href="#/products?category=家居生活">打造舒适居家空间</a></article><article class="category"><span class="emoji">☕</span><h3>厨房用品</h3><a href="#/products?category=厨房用品">探索咖啡与厨房好物</a></article><article class="category"><span class="emoji">📦</span><h3>订单管理</h3><a href="#/orders">查询订单或确认签收</a></article></section>
+      <section class="panel" style="margin-top:20px"><h2>热门商品</h2><div class="product-grid">${featured.map(productCard).join('')}</div></section>`
+    }
+    function queryParams() {
+      const query = location.hash.split('?')[1] ?? ''
+      return new URLSearchParams(query)
+    }
+    function renderProducts() {
+      const params = queryParams()
+      const q = params.get('q') ?? ''
+      const category = params.get('category') ?? ''
+      const sort = params.get('sort') ?? 'featured'
+      const filtered = state.products.filter(product => {
+        const text = `${product.id} ${product.name} ${product.brand}`.toLowerCase()
+        return text.includes(q.toLowerCase()) && (!category || product.category === category)
+      })
+      if (sort === 'price-asc') filtered.sort((a,b) => a.price - b.price)
+      if (sort === 'price-desc') filtered.sort((a,b) => b.price - a.price)
+      if (sort === 'rating') filtered.sort((a,b) => b.rating - a.rating)
+      const categories = [...new Set(state.products.map(product => product.category))]
+      app.innerHTML = `<h1 class="page-title">SKU 商品中心 <span class="muted small">${filtered.length} 件商品</span></h1>
+      <section class="panel"><form id="catalog-filter" class="toolbar"><div class="field" style="flex:2;min-width:240px"><label for="catalog-q">搜索 SKU</label><input id="catalog-q" name="q" value="${esc(q)}" placeholder="SKU 编号、商品或品牌" data-testid="catalog-search"></div><div class="field"><label for="catalog-category">分类</label><select id="catalog-category" name="category"><option value="">全部分类</option>${categories.map(item => `<option ${item === category ? 'selected' : ''}>${item}</option>`).join('')}</select></div><div class="field"><label for="catalog-sort">排序</label><select id="catalog-sort" name="sort"><option value="featured">综合推荐</option><option value="price-asc" ${sort === 'price-asc' ? 'selected' : ''}>价格从低到高</option><option value="price-desc" ${sort === 'price-desc' ? 'selected' : ''}>价格从高到低</option><option value="rating" ${sort === 'rating' ? 'selected' : ''}>评价优先</option></select></div><button class="btn btn-primary" data-testid="catalog-submit">筛选</button><a class="btn" href="#/products">清除筛选</a></form></section>
+      ${filtered.length ? `<div class="product-grid">${filtered.map(productCard).join('')}</div>` : '<div class="panel empty"><span class="emoji">🔎</span><h2>没有找到匹配商品</h2><p>请尝试其他关键词或清除筛选条件。</p><a class="btn" href="#/products">查看全部 SKU</a></div>'}`
+    }
+    function renderProduct(id) {
+      const product = productById(id)
+      if (!product) return renderNotFound()
+      app.innerHTML = `<p><a href="#/products">← 返回商品中心</a></p><section class="panel product-layout" data-testid="product-detail"><div>${art(product,true)}</div><div><div class="muted">${esc(product.brand)} · ${esc(product.category)}</div><h1 style="font-weight:400">${esc(product.name)}</h1><div class="rating">★★★★★ <span>${product.rating} 分 · ${product.reviews} 条评价</span></div><p>${esc(product.description)}</p><div class="detail-buy"><div class="price"><sup>¥</sup>${Number(product.price).toFixed(2)}</div><div class="stock">${product.stock > 0 ? `有货 · 剩余 ${product.stock} 件` : '暂时缺货'}</div><label class="qty">购买数量 <input id="product-qty" type="number" min="1" max="10" value="1" data-testid="product-qty"></label><button class="btn btn-primary btn-block" data-action="add-cart" data-id="${product.id}" data-qty="true" ${product.stock === 0 ? 'disabled' : ''} data-testid="detail-add-cart">加入购物车</button><a class="btn btn-block" style="margin-top:10px" href="#/cart">查看购物车</a></div><table class="specs"><tr><td>SKU 编号</td><td>${product.id}</td></tr><tr><td>配送</td><td>标准配送 / 加急配送</td></tr><tr><td>售后</td><td>本地仿真，不产生真实售后</td></tr></table></div></div></section>`
+    }
+    function renderPublish() {
+      app.innerHTML = `<h1 class="page-title">发布新 SKU</h1><section class="panel"><p class="muted">填写商品基础信息，提交后会立即出现在商品中心。</p><form id="publish-form"><div class="two-col"><div class="field"><label for="sku-name">商品名称 *</label><input id="sku-name" required placeholder="例如：City 便携保温杯" data-testid="sku-name"></div><div class="field"><label for="sku-brand">品牌 *</label><input id="sku-brand" required placeholder="例如：City" data-testid="sku-brand"></div></div><div class="three-col"><div class="field"><label for="sku-category">分类 *</label><select id="sku-category"><option>数码电子</option><option>家居生活</option><option>厨房用品</option><option>服饰箱包</option></select></div><div class="field"><label for="sku-price">售价（元）*</label><input id="sku-price" type="number" min="0.01" step="0.01" required placeholder="99.00" data-testid="sku-price"></div><div class="field"><label for="sku-stock">库存 *</label><input id="sku-stock" type="number" min="0" step="1" required value="10" data-testid="sku-stock"></div></div><div class="field"><label for="sku-description">商品描述</label><textarea id="sku-description" placeholder="介绍商品功能、材质和使用场景"></textarea></div><div class="field"><span class="field-label">商品图片</span><div id="image-dropzone" class="dropzone" data-testid="image-dropzone"><div><div style="font-size:32px">🖼️</div><p>拖拽图片到这里，或从本机选择</p><input id="sku-image" type="file" accept="image/*"><p id="image-name" class="muted small">支持本地模拟上传</p></div></div></div><button class="btn btn-primary" type="submit" data-testid="publish-submit">确认上架</button></form></section>`
+    }
+    function renderCart() {
+      if (!state.cart.length) {
+        app.innerHTML = `<h1 class="page-title">购物车</h1><section class="panel empty" data-testid="empty-cart"><span class="emoji">🛒</span><h2>购物车目前是空的</h2><p>去商品中心挑选几件商品吧。</p><a class="btn btn-primary" href="#/products">继续购物</a></section>`
+        return
+      }
+      app.innerHTML = `<h1 class="page-title">购物车</h1><div class="two-col"><section class="panel">${state.cart.map(item => {
+        const product = productById(item.productId)
+        return `<div class="cart-row" data-testid="cart-${product.id}"><div class="cart-thumb" style="background:${product.color}">${product.icon}</div><div><a href="#/product/${product.id}"><strong>${esc(product.name)}</strong></a><div class="small muted">${product.id}</div><button class="link-btn btn-danger" data-action="remove-cart" data-id="${product.id}">删除</button></div><label>数量 <input type="number" min="1" max="10" value="${item.qty}" data-action="cart-qty" data-id="${product.id}" aria-label="${esc(product.name)}数量"></label><strong>${money(product.price * item.qty)}</strong></div>`
+      }).join('')}</section><aside class="panel cart-summary"><h2>订单金额</h2><div class="summary-line"><span>商品数量</span><span>${cartCount()} 件</span></div><div class="summary-line"><span>商品金额</span><span>${money(cartTotal())}</span></div><div class="summary-line"><span>配送费</span><span>¥0.00</span></div><div class="summary-line summary-total"><span>合计</span><span>${money(cartTotal())}</span></div><a class="btn btn-primary btn-block" style="margin-top:18px" href="#/checkout" data-testid="checkout-link">去结算</a></aside></div>`
+    }
+    function renderCheckout() {
+      if (!state.cart.length) return renderCart()
+      app.innerHTML = `<h1 class="page-title">确认订单</h1><form id="checkout-form" class="two-col"><section class="panel"><h2>收货信息</h2><div class="two-col"><div class="field"><label for="customer">收货人 *</label><input id="customer" required value="张三" data-testid="customer"></div><div class="field"><label for="phone">手机号码 *</label><input id="phone" required value="13800000000" pattern="[0-9]{11}"></div></div><div class="field"><label for="address">详细地址 *</label><input id="address" required value="上海市徐汇区测试路 88 号" data-testid="address"></div><div class="two-col"><div class="field"><label for="city">城市 *</label><input id="city" required value="上海市"></div><div class="field"><label for="postal">邮编</label><input id="postal" value="200000"></div></div><div class="field"><label for="delivery">配送方式</label><select id="delivery"><option>标准配送</option><option>加急配送</option></select></div><div class="field"><span class="field-label">仿真支付方式</span><label class="inline-check"><input type="radio" name="payment" checked> 测试支付（不会扣款）</label></div></section><aside class="panel cart-summary"><h2>商品与金额</h2>${state.cart.map(item => {const p=productById(item.productId);return `<div class="summary-line"><span>${p.icon} ${esc(p.name)} × ${item.qty}</span><span>${money(p.price*item.qty)}</span></div>`}).join('')}<div class="summary-line summary-total"><span>应付合计</span><span>${money(cartTotal())}</span></div><button class="btn btn-primary btn-block" style="margin-top:18px" type="submit" data-testid="place-order">提交订单</button><p class="small muted">点击提交会生成本地仿真订单，可立即查询并签收。</p></aside></form>`
+    }
+    function statusClass(status) { return status === '已签收' ? 'done' : 'shipping' }
+    function renderOrders() {
+      const params = queryParams()
+      const q = params.get('q') ?? ''
+      const status = params.get('status') ?? ''
+      const orders = state.orders.filter(order => {
+        const text = `${order.id} ${order.customer} ${order.items.map(item => productById(item.productId)?.name).join(' ')}`.toLowerCase()
+        return text.includes(q.toLowerCase()) && (!status || order.status === status)
+      }).reverse()
+      app.innerHTML = `<h1 class="page-title">我的订单 <span class="muted small">${orders.length} 条</span></h1><section class="panel"><form id="order-filter" class="toolbar"><div class="field" style="flex:2;min-width:240px"><label for="order-q">订单查询</label><input id="order-q" name="q" value="${esc(q)}" placeholder="订单号、收货人或商品名称" data-testid="order-search"></div><div class="field"><label for="order-status">订单状态</label><select id="order-status" name="status"><option value="">全部状态</option><option ${status === '运输中' ? 'selected' : ''}>运输中</option><option ${status === '已签收' ? 'selected' : ''}>已签收</option></select></div><button class="btn btn-primary" data-testid="order-filter-submit">查询订单</button><a class="btn" href="#/orders">重置</a></form></section>
+      <section class="panel">${orders.length ? `<table data-testid="orders-table"><thead><tr><th>订单号</th><th>下单时间</th><th>商品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>${orders.map(order => `<tr data-testid="order-${order.id}"><td><a href="#/order/${order.id}">${order.id}</a></td><td>${order.createdAt}</td><td>${order.items.reduce((sum,item) => sum+item.qty,0)} 件</td><td>${money(order.total)}</td><td><span class="order-status ${statusClass(order.status)}">${order.status}</span></td><td><a class="btn btn-small" href="#/order/${order.id}">订单详情</a></td></tr>`).join('')}</tbody></table>` : '<div class="empty"><span class="emoji">📭</span><h2>没有找到订单</h2><a href="#/products">去逛逛商品</a></div>'}</section>`
+    }
+    function renderOrder(id) {
+      const order = state.orders.find(item => item.id === id)
+      if (!order) return renderNotFound()
+      app.innerHTML = `<p><a href="#/orders">← 返回订单列表</a></p><section class="panel" data-testid="order-detail"><div class="row" style="display:flex;justify-content:space-between;align-items:center"><div><h1 class="page-title">订单 ${order.id}</h1><p class="muted">下单时间：${order.createdAt}</p></div><span class="order-status ${statusClass(order.status)}">${order.status}</span></div><div class="timeline"><div class="step active">订单已提交</div><div class="step active">商品运输中</div><div class="step ${order.status === '已签收' ? 'active' : ''}">确认签收</div></div><div class="two-col"><div><h2>商品清单</h2>${order.items.map(item => {const p=productById(item.productId);return `<div class="cart-row"><div class="cart-thumb" style="background:${p.color}">${p.icon}</div><div><a href="#/product/${p.id}">${esc(p.name)}</a><div class="small muted">${p.id} · 数量 ${item.qty}</div></div><div></div><strong>${money(p.price*item.qty)}</strong></div>`}).join('')}<div class="summary-line summary-total"><span>订单合计</span><span>${money(order.total)}</span></div></div><aside><h2>收货信息</h2><p>${esc(order.customer)} · ${esc(order.phone)}</p><p>${esc(order.address)}</p><p class="muted">${esc(order.delivery)}</p>${order.signedAt ? `<p class="text-green">签收时间：${order.signedAt}</p>` : ''}${order.status !== '已签收' ? `<button class="btn btn-primary btn-block" data-action="open-receipt" data-id="${order.id}" data-testid="open-receipt">确认签收</button>` : '<p class="result text-green">此订单已完成签收</p>'}</aside></div></section>`
+    }
+    function renderNotFound() {
+      app.innerHTML = '<section class="panel empty"><span class="emoji">🧭</span><h1>页面不存在</h1><p>链接可能已失效，或者对应的数据已被重置。</p><a class="btn btn-primary" href="#/home">返回首页</a></section>'
+    }
+    function route() {
+      const path = location.hash.slice(2).split('?')[0] || 'home'
+      window.scrollTo(0,0)
+      if (path === 'home') return renderHome()
+      if (path === 'products') return renderProducts()
+      if (path.startsWith('product/')) return renderProduct(path.split('/')[1])
+      if (path === 'publish') return renderPublish()
+      if (path === 'cart') return renderCart()
+      if (path === 'checkout') return renderCheckout()
+      if (path === 'orders') return renderOrders()
+      if (path.startsWith('order/')) return renderOrder(path.split('/')[1])
+      renderNotFound()
+    }
+    function goProducts(values) {
+      const params = new URLSearchParams(Object.entries(values).filter(([,value]) => value))
+      location.hash = `#/products?${params}`
+    }
+    document.addEventListener('submit', event => {
+      event.preventDefault()
+      const form = event.target
+      if (form.id === 'global-search') goProducts({q:$('#search-input').value})
+      if (form.id === 'catalog-filter') goProducts(Object.fromEntries(new FormData(form)))
+      if (form.id === 'order-filter') {
+        const values = Object.fromEntries(new FormData(form))
+        const params = new URLSearchParams(Object.entries(values).filter(([,value]) => value))
+        location.hash = `#/orders?${params}`
+      }
+      if (form.id === 'publish-form') {
+        const id = `SKU-${String(Math.max(...state.products.map(product => Number(product.id.split('-')[1])),1000)+1).padStart(4,'0')}`
+        const product = {
+          id,name:$('#sku-name').value.trim(),brand:$('#sku-brand').value.trim(),category:$('#sku-category').value,
+          price:Number($('#sku-price').value),stock:Number($('#sku-stock').value),rating:5,reviews:0,icon:'📦',color:'#e4edf0',
+          description:$('#sku-description').value.trim() || '卖家暂未添加商品描述。',imageName:$('#image-dropzone').dataset.fileName ?? $('#sku-image').files[0]?.name ?? null,
+        }
+        state.products.push(product)
+        save(`上架 ${id}`)
+        toast(`商品 ${id} 已上架`)
+        location.hash = `#/product/${id}`
+      }
+      if (form.id === 'checkout-form') {
+        const order = {
+          id:`A${Date.now()}`,createdAt:new Date().toLocaleString('zh-CN',{hour12:false}),status:'运输中',
+          customer:$('#customer').value.trim(),phone:$('#phone').value.trim(),address:`${$('#city').value.trim()} ${$('#address').value.trim()}`,
+          delivery:$('#delivery').value,items:clone(state.cart),total:cartTotal(),signedAt:null,
+        }
+        state.orders.push(order)
+        state.cart = []
+        save(`下单 ${order.id}`)
+        location.hash = `#/order/${order.id}`
+        toast('订单提交成功')
+      }
+    })
+    document.addEventListener('click', event => {
+      const button = event.target.closest('[data-action]')
+      if (!button) return
+      const id = button.dataset.id
+      if (button.dataset.action === 'add-cart') {
+        const qty = button.dataset.qty ? Math.max(1,Number($('#product-qty').value)) : 1
+        const existing = state.cart.find(item => item.productId === id)
+        if (existing) existing.qty = Math.min(10,existing.qty + qty)
+        else state.cart.push({productId:id,qty})
+        save(`加入购物车 ${id} × ${qty}`)
+        toast('已加入购物车')
+        if (button.dataset.qty) location.hash = '#/cart'
+      }
+      if (button.dataset.action === 'remove-cart') {
+        state.cart = state.cart.filter(item => item.productId !== id)
+        save(`移除购物车商品 ${id}`)
+        route()
+      }
+      if (button.dataset.action === 'open-receipt') {
+        $('#receipt-dialog').dataset.orderId = id
+        $('#receipt-text').textContent = `订单 ${id} 是否已收到全部商品？`
+        $('#receipt-dialog').showModal()
+      }
+    })
+    document.addEventListener('change', event => {
+      if (event.target.id === 'sku-image') {
+        $('#image-name').textContent = `已选择：${event.target.files[0]?.name ?? '无'}`
+        $('#image-dropzone').dataset.fileName = event.target.files[0]?.name ?? ''
+      }
+      if (event.target.dataset.action === 'cart-qty') {
+        const item = state.cart.find(item => item.productId === event.target.dataset.id)
+        item.qty = Math.max(1,Math.min(10,Number(event.target.value)))
+        save(`修改数量 ${item.productId} × ${item.qty}`)
+        route()
+      }
+    })
+    $('#cancel-receipt').addEventListener('click', () => $('#receipt-dialog').close())
+    $('#confirm-receipt').addEventListener('click', () => {
+      const order = state.orders.find(item => item.id === $('#receipt-dialog').dataset.orderId)
+      order.status = '已签收'
+      order.signedAt = new Date().toLocaleString('zh-CN',{hour12:false})
+      $('#receipt-dialog').close()
+      save(`签收 ${order.id}`)
+      route()
+      toast('已确认签收')
+    })
+    $('#reset-demo').addEventListener('click', () => {
+      if (confirm('确定恢复初始商品、清空购物车并恢复一条运输中的订单吗？')) {
+        localStorage.removeItem(storageKey)
+        location.reload()
+      }
+    })
+    document.addEventListener('dragover', event => {
+      const zone = event.target.closest('#image-dropzone')
+      if (!zone) return
+      event.preventDefault()
+      zone.classList.add('over')
+    })
+    document.addEventListener('dragleave', event => {
+      const zone = event.target.closest('#image-dropzone')
+      if (zone) zone.classList.remove('over')
+    })
+    document.addEventListener('drop', event => {
+      const zone = event.target.closest('#image-dropzone')
+      if (!zone) return
+      event.preventDefault()
+      zone.classList.remove('over')
+      const file = event.dataTransfer.files[0]
+      if (file) {
+        $('#image-name').textContent = `已选择：${file.name}`
+        $('#image-dropzone').dataset.fileName = file.name
+        toast('图片已添加')
+      }
+    })
+    window.addEventListener('hashchange',route)
+    window.__shopTest = {
+      snapshot: () => clone(state),
+      reset: () => { localStorage.removeItem(storageKey);location.reload() },
+    }
+    updateChrome()
+    route()
+  </script>
+</body>
+</html>

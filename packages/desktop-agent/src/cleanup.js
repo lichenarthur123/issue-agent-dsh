@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 const PREFIX = 'mcp__cua-driver-mcp__'
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+export const PRESERVE_WINDOWS_ON_FAILURE = Symbol('preserveWindowsOnFailure')
+
 function messageText(message) {
   return (message?.content ?? [])
     .filter(block => block.type === 'text')

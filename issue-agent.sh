@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 export PATH="$PWD/.tools/node/bin:$PWD/node_modules/.bin:$PWD/.tools/bin:$PATH"
 export DSH_HOME="$PWD/.tools/dsh-home"
 set -a; source .env; set +a
+export DESKTOP_THINKING_MODE="${DESKTOP_THINKING_MODE:-always}"
 
 PROFILE="$DSH_HOME/profiles/issue-agent"
 mkdir -p "$PROFILE/node_modules/@local" "$PROFILE/node_modules/@deepseek-ai"

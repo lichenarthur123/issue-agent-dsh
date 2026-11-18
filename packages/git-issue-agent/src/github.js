@@ -68,6 +68,7 @@ export function buildComment(record) {
     `- session: \`${result.sessionId}\``,
   ]
   if (result.desktopToolCalls !== undefined) lines.push(`- desktop calls: ${result.desktopToolCalls}`)
+  if (result.groundingCalls) lines.push(`- grounding calls: ${result.groundingCalls}`)
   if (result.cleanup) lines.push(`- cleanup: \`${result.cleanup.status}\``)
   if (result.error) lines.push(`- error: \`${result.error.code}\` ${result.error.message ?? ''}`.trim())
   if (result.plan) lines.push('', '**CUA plan**', '', result.plan)

@@ -1,12 +1,11 @@
 import { GitHubIssues } from './github.js'
 import { acquireInstanceLock } from './lock.js'
 import { IssuePoller } from './poller.js'
-import { AgentRunner } from './runner.js'
 import { resolveSettings, settingsProblems } from './settings.js'
 import { IssueStore } from './store.js'
 
 export const name = 'git-issue-agent'
-export const inject = ['agents', 'sessions', 'agentDefaultModel', 'llm']
+export const inject = ['desktopTasks']
 
 export function apply(ctx, config = {}) {
   const settings = resolveSettings(config)
@@ -16,7 +15,10 @@ export function apply(ctx, config = {}) {
   const release = acquireInstanceLock(settings.stateDir)
   const github = new GitHubIssues(settings)
   const store = new IssueStore(settings.stateDir)
-  const runner = new AgentRunner(ctx, settings)
+  const runner = {
+    run: record => ctx.desktopTasks.run(record),
+    stop: () => ctx.desktopTasks.stop(),
+  }
   const poller = new IssuePoller({ settings, github, runner, store })
   poller.start()
 

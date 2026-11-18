@@ -6,11 +6,6 @@ function numberFrom(value, fallback, minimum) {
 }
 
 export function resolveSettings(config = {}, env = process.env) {
-  const taskTimeoutSeconds = numberFrom(
-    env.AGENT_TASK_TIMEOUT_SECONDS,
-    Number(config.taskTimeoutSeconds ?? 600),
-    1,
-  )
   return {
     repository: env.GITHUB_REPOSITORY ?? config.repository ?? '',
     apiBase: (env.GITHUB_API_BASE ?? config.apiBase ?? 'https://api.github.com').replace(/\/+$/, ''),
@@ -27,10 +22,6 @@ export function resolveSettings(config = {}, env = process.env) {
       1,
     ),
     stateDir: resolve(env.AGENT_STATE_DIR ?? config.stateDir ?? 'artifacts/issue-agent'),
-    artifactRoot: resolve(env.AGENT_ARTIFACT_ROOT ?? config.artifactRoot ?? 'artifacts/native'),
-    taskTimeoutMs: taskTimeoutSeconds * 1000,
-    cwd: resolve(env.AGENT_CWD ?? config.cwd ?? process.cwd()),
-    promptSuffix: config.promptSuffix ?? '',
   }
 }
 
