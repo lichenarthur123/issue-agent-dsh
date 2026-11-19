@@ -118,3 +118,23 @@ npm run test:e2e            # 使用模拟 GitHub 验证完整链路
 E2E_USE_LOCAL=1 npm run test:e2e  # 使用本地 8005 模型配置验证，不覆盖为云端模型
 E2E_VERBOSE=1 node tests/e2e/amashop-flow.mjs  # 使用真实模型和 CUA 验证 AmaShop 上架
 ```
+
+## 4. 本地经验记忆（可选，默认关闭）
+
+每个任务结束后（成功、失败、阻塞、超时都会触发，且至少有一步执行历史），Agent 把 `memory/experience.md` 中已有经验与本次执行历史、结果一起交给一次 27B 调用，合并成最多 20 条通用 bullet 后重写该文件。总结是异步的：任务结果先返回，经验更新在后台完成；总结失败只记录 `memory update skipped: ...`，不影响任务结果，也不会改写已有经验。
+
+每次任务开始时不做检索，直接把整个 `experience.md` 注入 prompt 的 `<local-experience>` 段（最多 2400 字节），并用系统提示标记为 untrusted 参考，不能覆盖当前观察和规则。写入前会移除 URL、Bearer/API key/token/password/cookie、邮箱和手机号；`memory/` 已加入 `.gitignore`。
+
+默认关闭，避免未经验证的经验影响正确性。开启方式：
+
+```bash
+# 环境变量（tests/desktop-task/run.sh、issue-agent.sh 均生效）
+DESKTOP_MEMORY_ENABLED=true bash tests/desktop-task/run.sh TC02
+
+# 或在 packages/desktop-agent/cordis.patch.yml 中设置
+memoryEnabled: true
+memoryRoot: memory
+memoryMaxLessons: 20
+```
+
+验证方法：开启后执行一次 TC02，检查 `memory/experience.md` 和日志 `memory saved lessons=...`。因为是异步更新，`memory saved` 会出现在任务结束之后，通常多等几秒即可。再执行同一用例，开头日志应出现 `memory loaded lessons=...`，并对比 `◆ PLAN task succeeded | steps=... | duration=...` 的步数和耗时。不要用未经多轮对比的数据宣称优化有效。

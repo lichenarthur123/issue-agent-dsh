@@ -79,7 +79,7 @@ bash tests/desktop-task/run.sh --dry-run
 
    环境变量 `DESKTOP_TASK_FILE` 指向 record，`DESKTOP_TASK_OUT` 指向结果文件。覆盖层把 `git-issue-agent` 设为 disabled，并插入 `desktop-task-once`。
 
-3. 插件在 `apply` 里调用 `ctx.desktopTasks.run(record)`，完成后同步写结果文件并退出。dsh 的 stdout/stderr 落在用例目录。
+3. 插件在 `apply` 里调用 `ctx.desktopTasks.run(record)`，先写结果文件；如果开启了经验记忆，再等待异步总结完成后退出（最多等 120 秒）。dsh 的 stdout/stderr 落在用例目录。
 
 4. runner 读取结果，按用例断言：
 

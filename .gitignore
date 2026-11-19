@@ -7,6 +7,9 @@
 artifacts/
 log/
 
+# 本地经验记忆（可能含任务痕迹，不进入版本库）
+memory/
+
 # 依赖与构建
 .tools/
 node_modules/

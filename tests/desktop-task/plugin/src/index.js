@@ -32,7 +32,14 @@ export function apply(ctx) {
     try {
       const result = await ctx.desktopTasks.run(record)
       const code = result.status === 'succeeded' ? 0 : result.status === 'unverified' ? 2 : 1
-      finish({ ...result, taskFile, finishedAt: new Date().toISOString() }, code)
+      const payload = { ...result, taskFile, finishedAt: new Date().toISOString() }
+      if (outFile) {
+        mkdirSync(dirname(outFile), { recursive: true })
+        writeFileSync(outFile, JSON.stringify(payload, null, 2) + '\n')
+      }
+      const idle = ctx.desktopTasks.whenMemoryIdle?.()
+      if (idle) await Promise.race([idle, new Promise(resolve => setTimeout(resolve, 120000).unref())])
+      finish(payload, code)
     } catch (error) {
       finish({
         status: 'error',

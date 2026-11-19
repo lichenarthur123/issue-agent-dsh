@@ -20,3 +20,13 @@ test('browser profile defaults to the local profile and supports isolated fallba
   assert.equal(resolveDesktopSettings({}, { DESKTOP_BROWSER_PROFILE_MODE: 'isolated_named' }).browserProfile.mode, 'isolated_named')
   assert.equal(resolveDesktopSettings({}, { DESKTOP_BROWSER_PROFILE_MODE: 'invalid' }).browserProfile.mode, 'existing_profile')
 })
+
+test('local memory is off by default and its lesson cap is configurable', () => {
+  const defaults = resolveDesktopSettings({}, {})
+  assert.equal(defaults.memoryEnabled, false)
+  assert.equal(defaults.memoryMaxLessons, 20)
+  assert.equal(resolveDesktopSettings({}, { DESKTOP_MEMORY_ENABLED: 'true' }).memoryEnabled, true)
+  assert.equal(resolveDesktopSettings({ memoryMaxLessons: 10 }, {}).memoryMaxLessons, 10)
+  assert.equal(resolveDesktopSettings({}, { DESKTOP_MEMORY_MAX_LESSONS: '25' }).memoryMaxLessons, 25)
+  assert.equal(resolveDesktopSettings({}, { DESKTOP_MEMORY_MAX_LESSONS: '0' }).memoryMaxLessons, 1)
+})

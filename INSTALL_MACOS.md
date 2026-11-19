@@ -204,6 +204,19 @@ artifacts/native/<session-id>/
 
 如果失败，先查看对应 `stderr.log`、`verdict.json` 和最后截图，不要通过 `--allow-unverified` 掩盖问题。
 
+### 8.5 可选：验证本地经验记忆
+
+经验记忆默认关闭。开启后跑两轮同一用例，确认写入和注入都生效：
+
+```bash
+DESKTOP_MEMORY_ENABLED=true DESKTOP_MEMORY_ROOT=memory bash tests/desktop-task/run.sh TC02
+cat memory/experience.md
+grep "memory saved\|memory loaded" tests/desktop-task/results/<timestamp>/stderr.log
+grep "task succeeded" tests/desktop-task/results/<timestamp>/stderr.log
+```
+
+任务结束后经验是异步更新的：`memory saved lessons=...` 可能比 `task succeeded` 晚几秒出现，稍等再看。第二轮开头应出现 `memory loaded lessons=...`，并对比两轮 `task succeeded` 行的 `steps` 和 `duration`。若总结调用失败，日志只有 `memory update skipped`，任务本身仍然成功，旧经验保持不变。记忆文件可能包含操作痕迹，`memory/` 不要提交到仓库。
+
 ## 9. 启动 GitHub Issue Agent
 
 确认本地验收完成后，在 `.env` 中配置 GitHub，然后执行：
@@ -227,6 +240,7 @@ bash scripts/doctor-macos.sh --github
 | 8765 端口被占用 | 确认现有页面是否为 AmaShop；否则停止旧进程后重试。 |
 | desktop is busy | 等待当前任务结束；确认无运行中的 issue-agent 后再清理过期桌面锁。 |
 | profile/MCP 模块缺失 | 重新运行 `bash scripts/prepare-profiles.sh`。 |
+| 经验记忆未生效 | 确认 `DESKTOP_MEMORY_ENABLED=true`；检查 `memory/experience.md` 是否存在，以及日志是否有 `memory loaded` 或 `memory update skipped`。失败或没有执行历史的任务不会更新经验。 |
 | 需要清空 Issue 队列 | 使用 `./clear-cache.sh`；它会停止常驻 issue-agent，但不会删除截图和原始会话。 |
 
 ## 11. 完成标准

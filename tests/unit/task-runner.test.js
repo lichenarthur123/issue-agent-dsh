@@ -1012,3 +1012,72 @@ test('crash recovery reloads the current page only once without resetting state'
   assert.deepEqual(calls[0].args.keys, ['cmd', 'r'])
   assert.equal(calls[0].args.delivery_mode, 'foreground')
 })
+test('local experience is injected before the first decision and refreshed asynchronously', async t => {
+  const h = harness(t, {
+    decisions: [
+      { done: false, kind: 'navigate', action: '打开 AmaShop', url: 'http://127.0.0.1:8765/#/home' },
+      { done: true, response: '已完成' },
+    ],
+    verifications: [{ status: 'passed', reason: '完成' }],
+  })
+  const lookups = []
+  const learned = []
+  h.runner.memory = {
+    enabled: true,
+    contextFor: options => {
+      lookups.push(options)
+      return '- 先导航到目标站点，再填写表单'
+    },
+    learn: async (ctx, selection, options) => { learned.push({ ctx, selection, options }) },
+  }
+  const result = await h.run()
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(lookups, [undefined])
+  assert.match(userText(h.executorRequests[0]), /<local-experience>\n- 先导航到目标站点，再填写表单\n<\/local-experience>/)
+  await h.runner.memoryJob
+  assert.equal(learned.length, 1)
+  assert.equal(learned[0].options.status, 'succeeded')
+  assert.equal(learned[0].options.url, 'http://127.0.0.1:8765/#/home')
+  assert.ok(learned[0].options.history.length > 0)
+})
+
+test('blocked tasks also refresh local experience with their outcome', async t => {
+  const h = harness(t, {
+    decisions: [
+      { done: false, kind: 'navigate', action: '打开 AmaShop', url: 'http://127.0.0.1:8765/#/home' },
+      { done: true, blocked: true, response: '无法完成' },
+    ],
+  })
+  const learned = []
+  h.runner.memory = {
+    enabled: true,
+    contextFor: () => '',
+    learn: async (ctx, selection, options) => { learned.push(options) },
+  }
+  const result = await h.run()
+  assert.equal(result.status, 'unverified')
+  await h.runner.memoryJob
+  assert.equal(learned.length, 1)
+  assert.equal(learned[0].status, 'unverified')
+})
+
+test('a failed memory update never fails a successful task', async t => {
+  const lines = []
+  t.mock.method(console, 'error', line => { lines.push(String(line)) })
+  const h = harness(t, {
+    decisions: [
+      { done: false, kind: 'navigate', action: '打开 AmaShop', url: 'http://127.0.0.1:8765/#/home' },
+      { done: true, response: '已完成' },
+    ],
+    verifications: [{ status: 'passed', reason: '完成' }],
+  })
+  h.runner.memory = {
+    enabled: true,
+    contextFor: () => '',
+    learn: async () => { throw new Error('summarizer unavailable') },
+  }
+  const result = await h.run()
+  assert.equal(result.status, 'succeeded')
+  await h.runner.memoryJob
+  assert.equal(lines.some(line => line.includes('memory update skipped: summarizer unavailable')), true)
+})

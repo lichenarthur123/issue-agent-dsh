@@ -20,6 +20,9 @@
         thinkingEffort: low
         groundingMode: auto
         keepWindowsOnFailure: true
+        memoryEnabled: false
+        memoryRoot: memory
+        memoryMaxLessons: 20
         grounder:
           baseURL: http://10.10.10.1:8003/v1
           model: ui-tars-1.5-7b

@@ -15,6 +15,7 @@ import { PRESERVE_WINDOWS_ON_FAILURE } from './cleanup.js'
 import { Executor } from './executor.js'
 import { FeedbackLog } from './feedback.js'
 import { log, logNode } from './log.js'
+import { LocalMemory } from './memory.js'
 import { StepPlanner } from './planner.js'
 import { CUA_TOOL_PREFIX } from './results.js'
 import { VlVerifier } from './verifier.js'
@@ -89,6 +90,12 @@ export class DesktopTaskRunner {
     this.recoveryCounts = new Map()
     this.currentUrl = null
     this.appsCache = null
+    this.memoryJob = null
+    this.memory = new LocalMemory({
+      enabled: settings.memoryEnabled ?? false,
+      root: settings.memoryRoot ?? 'memory',
+      maxLessons: settings.memoryMaxLessons ?? 20,
+    })
   }
 
   stop() {
@@ -532,6 +539,19 @@ export class DesktopTaskRunner {
     }
   }
 
+  scheduleMemoryUpdate(input) {
+    if (!this.memory.enabled || input.history.length === 0) return
+    const selection = this.settings.executor
+    this.memoryJob = (this.memoryJob ?? Promise.resolve())
+      .then(() => new Promise(resolve => setImmediate(resolve)))
+      .then(() => this.memory.learn(this.ctx, selection, input))
+      .catch(error => log.exec(`memory update skipped: ${error.message}`))
+  }
+
+  whenMemoryIdle() {
+    return this.memoryJob ?? Promise.resolve()
+  }
+
   async run(record) {
     await this.ctx.get('loader')?.await()
     const startedAt = Date.now()
@@ -545,6 +565,7 @@ export class DesktopTaskRunner {
       } catch {}
     }, this.settings.taskTimeoutMs)
     let handle
+    const history = []
 
     try {
       const sessionId = `session-${randomUUID()}`
@@ -578,8 +599,8 @@ export class DesktopTaskRunner {
       })
       const verifier = new VlVerifier(this.ctx, this.settings.executor)
       const request = [record.issue.title, record.issue.body].filter(Boolean).join('\n\n').trim()
+      const memoryText = this.memory.contextFor()
       const steps = []
-      const history = []
       let observation = await this.observe(agent)
       const feedbacks = new FeedbackLog()
       let invalidDecisions = 0
@@ -636,6 +657,7 @@ export class DesktopTaskRunner {
             request,
             plan,
             history,
+            memoryText,
             observation,
             pageTarget: this.pageTarget,
             targetWindow: this.targetWindow ?? (observation.pid ? { pid: observation.pid, window_id: observation.window_id } : null),
@@ -830,6 +852,7 @@ export class DesktopTaskRunner {
       handle = null
       const result = readResult(this.settings.artifactRoot, sessionId)
       const status = failure ? 'failed' : succeeded ? 'succeeded' : 'unverified'
+      this.scheduleMemoryUpdate({ history, url: this.currentUrl ?? '', status })
       return {
         sessionId,
         status,
@@ -850,9 +873,11 @@ export class DesktopTaskRunner {
       }
     } catch (error) {
       log.error(error?.message ?? String(error))
+      const status = timedOut ? 'timeout' : this.operation?.signal.aborted ? 'cancelled' : 'failed'
+      this.scheduleMemoryUpdate({ history, url: this.currentUrl ?? '', status })
       return {
         sessionId: this.sessionId ?? undefined,
-        status: timedOut ? 'timeout' : this.operation?.signal.aborted ? 'cancelled' : 'failed',
+        status,
         answer: '',
         durationMs: Date.now() - startedAt,
         artifactDir: this.sessionId ? join(this.settings.artifactRoot, this.sessionId) : undefined,
