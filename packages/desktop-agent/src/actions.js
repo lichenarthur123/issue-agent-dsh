@@ -34,6 +34,25 @@ function findActionableElement(elements, target, typing) {
   return partial.length === 1 ? partial[0] : null
 }
 
+const PAGE_EDITABLE_ROLE = /^(textbox|searchbox|spinbutton)$/i
+
+function findPageEditable(refs, target) {
+  const editable = refs.filter(ref => PAGE_EDITABLE_ROLE.test(ref.role ?? '')
+    || (ref.actions ?? []).includes('type'))
+  if (editable.length === 0) return null
+  const wanted = normalizeLabel(target)
+  const exact = wanted ? editable.find(ref => normalizeLabel(ref.name) === wanted) : null
+  if (exact) return exact
+  const partial = wanted
+    ? editable.filter(ref => {
+        const name = normalizeLabel(ref.name)
+        return Boolean(name) && (name.includes(wanted) || wanted.includes(name))
+      })
+    : []
+  if (partial.length === 1) return partial[0]
+  return editable.length === 1 ? editable[0] : null
+}
+
 function findPopup(elements, target) {
   const wanted = normalizeLabel(target)
   const candidates = elements.filter(element => (
@@ -193,7 +212,7 @@ function createExecution() {
   return { execution, invoke }
 }
 
-export async function operateUi(ctx, agent, settings, decision, targetWindow, observation, signal) {
+export async function operateUi(ctx, agent, settings, decision, targetWindow, observation, signal, pageTarget = null) {
   const execution = { calls: [], response: '' }
   const record = name => {
     const entry = {
@@ -207,9 +226,9 @@ export async function operateUi(ctx, agent, settings, decision, targetWindow, ob
   const invoke = async (name, args) => {
     const entry = record(name)
     entry.arguments = args
-    await callCuaTool(ctx, agent, name, args)
+    const value = await callCuaTool(ctx, agent, name, args)
     entry.status = 'succeeded'
-    return entry
+    return value
   }
   const typing = Boolean(String(decision.value ?? '').trim())
   const groundingMode = settings.groundingMode ?? 'auto'
@@ -219,8 +238,84 @@ export async function operateUi(ctx, agent, settings, decision, targetWindow, ob
     const submit = /\n\s*$/.test(typed)
     const value = submit ? typed.replace(/\s+$/, '') : typed.trim()
     if (typing && !value) throw new Error('text input requires text before the trailing newline')
+    const pageBound = Boolean(pageTarget
+      && pageTarget.pid === targetWindow.pid
+      && pageTarget.windowId === targetWindow.window_id)
     const grounded = decision.locate === 'ground'
     const element = grounded ? null : findActionableElement(observation?.elements ?? [], decision.target, typing)
+    const readPageValue = async refId => {
+      if (!pageBound) return null
+      try {
+        const value = await callCuaTool(ctx, agent, 'get_browser_state', {
+          session: pageTarget.session,
+          target_id: pageTarget.targetId,
+          tab_id: pageTarget.tabId,
+          snapshot_format: 'semantic_v2',
+        })
+        const payload = value?.structuredContent ?? value
+        return refId
+          ? (payload?.refs ?? []).find(ref => ref.ref === refId) ?? null
+          : findPageEditable(payload?.refs ?? [], decision.target)
+      } catch (error) {
+        log.exec(`typed value readback unavailable: ${error.message}`)
+        return null
+      }
+    }
+    const verifyTypedValue = async refId => {
+      const current = await readPageValue(refId)
+      if (!current || current.value === undefined || current.value === null) return null
+      const expected = decision.expect?.value ?? value
+      if (!sameValue(normalizeLabel(current.value), normalizeLabel(expected))) {
+        throw new Error(`${decision.target} now reads ${current.value || '(empty)'} instead of ${expected}`)
+      }
+      return current
+    }
+    const pageEditable = typing && pageBound && settings.observationMode !== 'screenshot'
+      && (!element || element.in_web_content === true)
+    if (pageEditable) {
+      let payload = null
+      let snapshotError = null
+      try {
+        payload = await callCuaTool(ctx, agent, 'get_browser_state', {
+          session: pageTarget.session,
+          target_id: pageTarget.targetId,
+          tab_id: pageTarget.tabId,
+          snapshot_format: 'semantic_v2',
+        })
+        payload = payload?.structuredContent ?? payload
+      } catch (error) {
+        snapshotError = error
+        log.exec(`page snapshot unavailable for typing: ${error.message}`)
+      }
+      const ref = findPageEditable(payload?.refs ?? [], decision.target)
+      if (ref) {
+        const pageArgs = {
+          session: pageTarget.session,
+          target_id: pageTarget.targetId,
+          tab_id: pageTarget.tabId,
+          ref: ref.ref,
+        }
+        if (sameValue(normalizeLabel(ref.value), normalizeLabel(value))) {
+          if (submit) await invoke('browser_type', { ...pageArgs, text: '\n', mode: 'keystrokes' })
+          execution.response = `${normalizeLabel(decision.target)} already shows ${value}; no typing needed${submit ? '; pressed return' : ''}`
+          return execution
+        }
+        await invoke('browser_type', { ...pageArgs, text: value, replace: true })
+        const current = await verifyTypedValue(ref.ref)
+        if (submit) await invoke('browser_type', { ...pageArgs, text: '\n', mode: 'keystrokes' })
+        execution.response = current
+          ? `Replaced ${normalizeLabel(decision.target)} with ${value} via page ref ${ref.ref}; verified value${submit ? '; pressed return' : ''}`
+          : `Typed ${value} into ${normalizeLabel(decision.target)} via page ref ${ref.ref}; value could not be read back${submit ? '; pressed return' : ''}`
+        return execution
+      }
+      if (!grounded) {
+        if (snapshotError) {
+          throw new Error(`cannot read the bound page to verify "${decision.target}": ${snapshotError.message}; re-observe or navigate again`)
+        }
+        throw new Error(`no page textbox matches "${decision.target}" in the current browser snapshot; re-observe the page and use its visible label`)
+      }
+      log.exec(`no page textbox matches "${decision.target}"; falling back to grounded native typing`)
+    }
     if (!grounded && !element) {
       throw new Error(`no accessibility element matches "${decision.target}"; use its exact AX label or set locate="ground"`)
     }
@@ -287,15 +382,18 @@ export async function operateUi(ctx, agent, settings, decision, targetWindow, ob
       await invoke('click', { ...targetWindow, x: point.x, y: point.y, delivery_mode: 'foreground' })
     }
     const target = base ?? { ...targetWindow, delivery_mode: 'foreground' }
-    await invoke('press_key', { ...target, key: 'a', modifiers: ['cmd'] })
+    await invoke('hotkey', { ...target, keys: ['cmd', 'a'] })
     await invoke('press_key', { ...target, key: 'delete' })
     await invoke('type_text', point
       ? { ...targetWindow, x: point.x, y: point.y, delivery_mode: 'foreground', text: value }
       : { ...target, text: value })
+    const current = pageBound ? await verifyTypedValue() : null
     if (submit) await invoke('press_key', { ...target, key: 'return' })
     execution.response = element
       ? `Replaced ${normalizeLabel(element.label ?? element.value)} with ${value} via AX ${element.element_token}${submit ? '; pressed return' : ''}`
-      : `Replaced ${decision.target} with ${value} at (${point.x},${point.y})${submit ? '; pressed return' : ''}`
+      : current
+        ? `Replaced ${decision.target} with ${value} at (${point.x},${point.y}); verified value${submit ? '; pressed return' : ''}`
+        : `Typed ${value} into ${decision.target} at (${point.x},${point.y}); value could not be read back${submit ? '; pressed return' : ''}`
   } catch (error) {
     const pending = execution.calls.filter(entry => entry.status === 'pending')
     for (const entry of pending) {
@@ -371,7 +469,7 @@ export async function pressChord(ctx, agent, decision, targetWindow, observation
         ...observation?.snapshotId ? { snapshot_id: observation.snapshotId } : {},
         delivery_mode: 'background',
       }
-    : { ...targetWindow, delivery_mode: 'background' }
+    : { ...targetWindow, delivery_mode: decision.locate === 'ground' ? 'foreground' : 'background' }
   const args = modifiers.length ? { ...base, keys: [...modifiers, key] } : { ...base, key }
   await invoke(ctx, agent, modifiers.length ? 'hotkey' : 'press_key', args)
   execution.response = `Pressed ${[...modifiers, key].join('+')}`
@@ -597,7 +695,7 @@ async function openExistingBrowser(profile, restart) {
   await delay(1500)
 }
 
-export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, existing = null, profile = { mode: 'isolated_new' }, openBrowser = openExistingBrowser }) {
+export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, existing = null, profile = { mode: 'isolated_new' }, openBrowser = openExistingBrowser, retryOnWrongTarget = true }) {
   const execution = { calls: [], response: '' }
   const call = async (name, args) => {
     const record = {
@@ -653,6 +751,7 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       execution.pageTarget = existing
       execution.response = `Navigated to ${url}${reloaded ? ' after one reload' : ''}`
       await ensureWindowVisible(ctx, agent, { pid: existing.pid, window_id: existing.windowId })
+      execution.status = 'succeeded'
       log.exec(`page reused pid=${existing.pid} window=${existing.windowId} url=${url}`)
     } catch (error) {
       execution.fatal = isFatalNavigationError(error)
@@ -705,11 +804,24 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       const launchProfile = profile.mode === 'isolated_named'
         ? { mode: 'isolated_named', name: profile.name ?? 'issue-agent' }
         : { mode: 'isolated_new' }
-      const prepared = await call('browser_prepare', {
+      const prepareArgs = {
         session: sessionId,
         allow_launch: true,
         profile: launchProfile,
-      })
+      }
+      let prepared
+      try {
+        prepared = await call('browser_prepare', prepareArgs)
+      } catch (error) {
+        if (!/browser_wrong_target_refused/.test(error.message)) throw error
+        log.exec('isolated browser target mismatch; recreating the browser session once')
+        try {
+          await callCuaTool(ctx, agent, 'end_session', { session: sessionId })
+        } catch (cleanupError) {
+          log.exec(`stale browser session cleanup failed: ${cleanupError.message}`)
+        }
+        prepared = await call('browser_prepare', prepareArgs)
+      }
       pid = prepared.prepared_pid ?? prepared.structuredContent?.prepared_pid
       if (!Number.isInteger(pid)) throw new Error('browser_prepare did not return prepared_pid')
       const listed = await call('list_windows', { pid, on_screen_only: false })
@@ -750,8 +862,25 @@ export async function navigateSite(ctx, agent, { sessionId, url, selectWindow, e
       execution.activation = { status: 'failed', pid, reason: error.message }
       log.exec(`activation failed: ${error.message}`)
     }
+    execution.status = 'succeeded'
     log.exec(`navigated pid=${pid} window=${window.window_id} url=${url} profile=${profile.mode}`)
   } catch (error) {
+    if (retryOnWrongTarget && profile.mode !== 'existing_profile' && /browser_wrong_target_refused/.test(error.message)) {
+      log.exec('isolated browser binding failed; recreating the browser session once')
+      try {
+        await callCuaTool(ctx, agent, 'end_session', { session: sessionId })
+      } catch (cleanupError) {
+        log.exec(`stale browser session cleanup failed: ${cleanupError.message}`)
+      }
+      const previousCalls = execution.calls
+      const retryProfile = profile.mode === 'isolated_named' ? { mode: 'isolated_new' } : profile
+      log.exec(`retrying browser navigation with ${retryProfile.mode}`)
+      const retried = await navigateSite(ctx, agent, {
+        sessionId, url, selectWindow, existing, profile: retryProfile, openBrowser, retryOnWrongTarget: false,
+      })
+      retried.calls = [...previousCalls, ...retried.calls]
+      return retried
+    }
     const guidance = profile.mode === 'existing_profile'
       ? '; existing_profile requires Cua Driver started with --grant existing-profile and an open Chrome or Edge window'
       : ''

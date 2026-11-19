@@ -219,6 +219,18 @@ test('screenshot observation mode drops the AX payload from the executor prompt'
   assert.match(EXECUTOR_SYSTEM, /locate=ax \(the default\)/)
 })
 
+test('screenshot mode includes expanded business JSON without restoring the AX tree', () => {
+  const stateJson = JSON.stringify({ cart: [{ productId: 'SKU-1001', qty: 3 }], orders: [], products: [], lastAction: '加入购物车 SKU-1001 × 3' })
+  const prompt = buildExecutorPrompt({
+    request: '完成后把业务状态 JSON 放在回复最后',
+    observation: { text: 'full AX must stay out', stateJson },
+    observationMode: 'screenshot',
+  })
+  assert.match(prompt, /<current-state-json>.*SKU-1001.*<\/current-state-json>/)
+  assert.ok(!prompt.includes('full AX must stay out'))
+  assert.match(executorSystem('screenshot'), /copy that JSON verbatim/)
+})
+
 test('history keeps five full steps and summarizes the omitted steps', () => {
   const history = Array.from({ length: 8 }, (_, index) => ({
     step: index + 1,
@@ -332,6 +344,9 @@ test('batches are capped at three and cannot hold a terminal decision', () => {
   assert.equal(many.actions.length, 3)
   assert.throws(() => parsePlannerDecision('{"actions":[{"done":true,"response":"x"}]}'), /single decision/)
   assert.throws(() => parsePlannerDecision('{"actions":[]}'), /1 to 3/)
+  const batch = parsePlannerDecision('{"actions":[{"kind":"action","target":"数量","value":"15","expect":{"value":10},"observeAfter":true}]}')
+  assert.deepEqual(batch.actions[0].expect, { value: '10' })
+  assert.equal(batch.actions[0].observeAfter, true)
 })
 
 test('an executor supplied point is parsed into the decision', () => {

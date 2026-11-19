@@ -22,7 +22,16 @@ async function invokeCuaTool(ctx, agent, name, args) {
   if (!result) throw new Error(`${name} returned no result`)
   const errorText = toolErrorText(result)
   if (errorText) throw new Error(errorText)
-  return result.value
+  const value = result.value
+  const payload = value?.structuredContent ?? value
+  const refusal = payload?.effect === 'refused' || payload?.status === 'refused' || payload?.refusal
+  if (refusal) {
+    const detail = payload.refusal ?? payload
+    const code = detail.code ?? 'refused'
+    const message = detail.message ?? detail.escalation?.reason ?? 'the driver declined this action'
+    throw new Error(`${name} refused (${code}): ${message}`)
+  }
+  return value
 }
 
 export async function callCuaTool(ctx, agent, name, args) {
@@ -60,6 +69,10 @@ export async function bringWindowToFront(ctx, agent, window, { attempts = 3 } = 
       }
       return payload
     } catch (error) {
+      if (/process_activated=true/.test(error.message) && /focused=true/.test(error.message)) {
+        log.exec(`window ${window.window_id} is focused despite a non-ordinary popup; continuing`)
+        return { activated: true, focused: true, popup: true }
+      }
       lastError = error
       if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, 300))
     }
@@ -127,6 +140,23 @@ const CONTEXT_ROLE = /StaticText|Heading/i
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function businessStateJson(elements) {
+  for (const element of elements) {
+    for (const candidate of [element.value, element.label]) {
+      const text = String(candidate ?? '').trim()
+      if (!text.startsWith('{') || !text.endsWith('}') || text.length > 20000) continue
+      try {
+        const state = JSON.parse(text)
+        if (state && typeof state === 'object' && 'lastAction' in state
+          && ['cart', 'orders', 'products'].some(key => key in state)) {
+          return JSON.stringify(state)
+        }
+      } catch {}
+    }
+  }
+  return null
 }
 
 function visibleElement(element) {
@@ -263,6 +293,7 @@ export async function captureWindow(ctx, agent, { pid, window_id, maxElements = 
     pid,
     window_id,
     elements,
+    stateJson: businessStateJson(elements),
     maxElements,
     snapshotId: structured.snapshot_id,
   }

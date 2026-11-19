@@ -393,6 +393,57 @@ test('browser wrong-target errors are marked as unrecoverable', async () => {
   assert.match(execution.response, /browser_wrong_target_refused/)
 })
 
+test('an isolated browser state binding error rebuilds the session once', async () => {
+  let prepares = 0
+  let endings = 0
+  const profiles = []
+  const values = {
+    list_windows: {
+      windows: [{
+        pid: 79854,
+        window_id: 17971,
+        title: 'about:blank',
+        bounds: { width: 1200, height: 835 },
+        is_on_screen: true,
+        on_current_space: true,
+      }],
+    },
+    get_browser_state: { target_id: 'bt-real', tabs: [{ active: true, tab_id: 'tab-real' }] },
+    browser_navigate: { status: 'ok' },
+    bring_to_front: {},
+  }
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const call = batch[0]
+        const name = call.name.replace('mcp__cua-driver-mcp__', '')
+        if (name === 'browser_prepare') {
+          prepares += 1
+          profiles.push(JSON.parse(call.arguments).profile)
+        }
+        if (name === 'get_browser_state' && prepares === 1) {
+          return { results: [{ result: { isError: true, content: [{ type: 'text', text: 'browser_wrong_target_refused: no CDP target correlates with native window' }] } }] }
+        }
+        if (name === 'end_session') endings += 1
+        const value = name === 'browser_prepare' ? { prepared_pid: 79854 } : values[name]
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await navigateSite(ctx, {}, {
+    sessionId: 'session-isolated-retry',
+    url: 'http://127.0.0.1:8765/#/home',
+    profile: { mode: 'isolated_named', name: 'amashop-task' },
+    selectWindow: windows => runner.selectContentWindow(windows),
+  })
+  assert.equal(prepares, 2)
+  assert.equal(endings, 1)
+  assert.deepEqual(profiles.map(profile => profile.mode), ['isolated_named', 'isolated_new'])
+  assert.equal(execution.response, 'Navigated to http://127.0.0.1:8765/#/home')
+  assert.equal(execution.status, 'succeeded')
+})
+
 test('browser input uses the grounding coordinates without another model rewrite', async t => {
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
     choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
@@ -422,12 +473,12 @@ test('browser input uses the grounding coordinates without another model rewrite
   assert.deepEqual(calls.map(call => call.name), [
     'mcp__cua-driver-mcp__get_window_state',
     'mcp__cua-driver-mcp__click',
-    'mcp__cua-driver-mcp__press_key',
+    'mcp__cua-driver-mcp__hotkey',
     'mcp__cua-driver-mcp__press_key',
     'mcp__cua-driver-mcp__type_text',
   ])
   assert.deepEqual(calls[1].args, { pid: 79854, window_id: 17971, x: 231, y: 219, delivery_mode: 'foreground' })
-  assert.deepEqual(calls[2].args, { pid: 79854, window_id: 17971, delivery_mode: 'foreground', key: 'a', modifiers: ['cmd'] })
+  assert.deepEqual(calls[2].args, { pid: 79854, window_id: 17971, delivery_mode: 'foreground', keys: ['cmd', 'a'] })
   assert.equal(calls[3].args.key, 'delete')
   assert.deepEqual(calls[4].args, {
     pid: 79854,
@@ -531,7 +582,7 @@ test('text input uses the accessibility token when the field label matches', asy
   })
   assert.equal(execution.calls.at(-1).status, 'succeeded')
   assert.deepEqual(calls.map(call => call.name), [
-    'mcp__cua-driver-mcp__press_key',
+    'mcp__cua-driver-mcp__hotkey',
     'mcp__cua-driver-mcp__press_key',
     'mcp__cua-driver-mcp__type_text',
   ])
@@ -541,8 +592,7 @@ test('text input uses the accessibility token when the field label matches', asy
     element_token: 'snap:55',
     snapshot_id: 'snap-1',
     delivery_mode: 'background',
-    key: 'a',
-    modifiers: ['cmd'],
+    keys: ['cmd', 'a'],
   })
   assert.equal(calls[1].args.key, 'delete')
   assert.deepEqual(calls[2].args, {
@@ -832,7 +882,7 @@ test('a trailing newline types the text and presses return', async t => {
   assert.deepEqual(calls.map(call => call.name), [
     'mcp__cua-driver-mcp__get_window_state',
     'mcp__cua-driver-mcp__click',
-    'mcp__cua-driver-mcp__press_key',
+    'mcp__cua-driver-mcp__hotkey',
     'mcp__cua-driver-mcp__press_key',
     'mcp__cua-driver-mcp__type_text',
     'mcp__cua-driver-mcp__press_key',
@@ -881,6 +931,9 @@ test('a key chord uses hotkey and a single key uses press_key', async () => {
     delivery_mode: 'background',
     key: 'return',
   })
+  const grounded = await pressChord(ctx, {}, { value: 'escape', locate: 'ground' }, window, {})
+  assert.match(grounded.response, /Pressed escape/)
+  assert.equal(calls[2].args.delivery_mode, 'foreground')
 })
 
 test('scroll targets the matching AX area and falls back to the focused region', async () => {

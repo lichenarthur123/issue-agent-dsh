@@ -27,9 +27,9 @@ export function executorSystem(observationMode = 'hybrid', coordinateSpace = 'pi
     ? 'Always set locate="ground": the runtime asks the grounding model for coordinates on the current screenshot. target holds the short visible text of the control, or a brief visual description when it has no text. Read task content and field values directly from the screenshot.'
     : 'locate=ax (the default) drives the accessibility element whose label matches target. Switch to locate=ground only when no AX element identifies the target, for example a canvas or an image-only control; the runtime then asks the grounding model for coordinates.',
   screenshotOnly
-    ? 'After every action you receive a fresh screenshot. Read the new state before deciding and never repeat an action whose effect is already visible.'
+    ? 'After every action you receive a fresh screenshot. Read the new state before deciding and never repeat an action whose effect is already visible. With <current-state-json>, copy that JSON verbatim into the final response and finish now; never scroll to transcribe it.'
     : 'After every action you receive a fresh screenshot and AX tree. Read the new state before deciding and never repeat an action whose effect is already visible.',
-  'Batching: "actions" runs at most 3 decisions serially in one round, for example filling three inputs, ticking several checkboxes, or filling a field and then scrolling. Only one fresh screenshot is provided after the whole batch, not between its steps, so never batch a step whose next step depends on seeing its result. A failed step cancels the rest of the batch. done and blocked must always be returned as a single decision, never inside actions.',
+  'Batching: "actions" runs up to 3 predictable decisions serially. A failed step cancels the rest. Use expect={"value":"..."} to verify typed values. Set observeAfter=true only when the next step needs a fresh screenshot; otherwise observation happens after the batch. done and blocked must be single decisions.',
   coordinateSpace === 'normalized_1000'
     ? 'When locate=ground include your best rough "point": [x, y] estimate using normalized coordinates in the range 0-1000 relative to the screenshot width and height, NOT pixels: x = 1000 * targetX / screenshotWidth, y = 1000 * targetY / screenshotHeight. It does not need to be exact: the runtime converts it to pixels, and the grounding model receives the full screenshot plus this reference point and refines it to the precise coordinate, so a rough area is enough and prevents confusing identical text elsewhere on the page.'
     : 'When locate=ground include your best rough "point": [x, y] estimate of the target in pixels of the current screenshot (see <screenshot-size>). It does not need to be exact: the grounding model receives the full screenshot plus this reference point and refines it to the precise coordinate, so a rough area is enough and prevents confusing identical text elsewhere on the page.',
@@ -112,6 +112,9 @@ function buildScreenshotExecutorPrompt({
     fixed.push(`<screenshot-size>${observation.ref.width}x${observation.ref.height}</screenshot-size>`, '')
   }
   if (pageTarget) fixed.push(`<page-target>${JSON.stringify(pageTarget)}</page-target>`, '')
+  if (/json/i.test(state.request) && observation?.stateJson) {
+    fixed.push(`<current-state-json>${observation.stateJson}</current-state-json>`, '')
+  }
   const render = () => [
     '<original-task>',
     state.request,

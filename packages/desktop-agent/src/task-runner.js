@@ -40,6 +40,24 @@ function observationKey(observation) {
     : 'empty'
 }
 
+function failureSignature(decision, response) {
+  const target = String(decision.target ?? '')
+    .replace(/\s+showing\b.*$/i, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+  return [decision.kind, target, String(decision.value ?? '').trim(), String(response ?? '').trim()].join('|')
+}
+
+function isTimeout(error) {
+  return /operation was aborted due to timeout|timed out after|TimeoutError/i.test(String(error ?? ''))
+}
+
+function resetNavigationKey(decision) {
+  const url = String(decision.url ?? '')
+  return decision.kind === 'navigate' && /[?&]reset=1(?:&|$)/.test(url) ? url : null
+}
+
 function summarizeExecution(execution) {
   const failed = execution.calls.some(call => call.status === 'failed')
   const succeeded = execution.calls.length > 0 && execution.calls.every(call => call.status === 'succeeded')
@@ -67,6 +85,9 @@ export class DesktopTaskRunner {
     this.pageTarget = null
     this.knownWindows = new Map()
     this.driverPids = new Set()
+    this.resetNavigations = new Set()
+    this.recoveryCounts = new Map()
+    this.currentUrl = null
     this.appsCache = null
   }
 
@@ -115,10 +136,11 @@ export class DesktopTaskRunner {
   }
 
   validateExecutorCall(exec) {
+    const internal = (this.internalDepth ?? 0) > 0
     const pid = exec.arguments?.pid
     const windowId = exec.arguments?.window_id
     const tool = exec.name.slice(CUA_TOOL_PREFIX.length)
-    if (this.pageTarget && ['browser_click', 'browser_pointer', 'browser_type'].includes(tool)) {
+    if (!internal && this.pageTarget && ['browser_click', 'browser_pointer', 'browser_type'].includes(tool)) {
       return 'page refs can expire during model inference; use an element_token, or desktop_ground_ui followed by native click or type_text with x,y'
     }
     if (this.pageTarget && ['click', 'type_text'].includes(tool)
@@ -139,9 +161,54 @@ export class DesktopTaskRunner {
   }
 
   async observe(agent) {
-    const observation = await this.observeWindow(agent)
+    let observation
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      observation = await this.observeWindow(agent)
+      if (!await this.recoverBrowser(agent, observation)) break
+    }
     const apps = await this.describeInstalledApps(agent)
     return { ...observation, apps: apps.text, runningApps: apps.running }
+  }
+
+  async recoverBrowser(agent, observation) {
+    if (!this.pageTarget) return false
+    const text = String(observation?.text ?? '')
+    const popup = /Restore pages|恢复页面/i.test(text)
+      ? 'restore-pages'
+      : /Google Translate|Google 翻译/i.test(text) ? 'translate' : null
+    const crash = /喔唷，崩溃啦|Aw, Snap|ERR_CONNECTION_|ERR_TIMED_OUT/i.test(text)
+    if (!popup && (!crash || !this.currentUrl)) return false
+    const key = popup ?? `crash:${this.currentUrl}`
+    const limit = popup === 'restore-pages' ? 2 : 1
+    const count = this.recoveryCounts.get(key) ?? 0
+    if (count >= limit) return false
+    this.recoveryCounts.set(key, count + 1)
+    try {
+      if (popup) {
+        const close = (observation.elements ?? []).find(element => (
+          /Button/i.test(element.role ?? '')
+          && element.element_token
+          && /^(x|close|关闭)$/i.test(String(element.label ?? '').trim())
+        ))
+        if (close) {
+          await callCuaTool(this.ctx, agent, 'click', {
+            ...this.targetWindow,
+            element_token: close.element_token,
+            ...observation.snapshotId ? { snapshot_id: observation.snapshotId } : {},
+            delivery_mode: 'foreground',
+          })
+        } else {
+          await pressChord(this.ctx, agent, { value: 'escape', locate: 'ground' }, this.targetWindow, observation)
+        }
+      } else {
+        await pressChord(this.ctx, agent, { value: 'cmd+r', locate: 'ground' }, this.targetWindow, observation)
+      }
+      log.exec(`browser recovery ${key} (${count + 1}/${limit})`)
+      return true
+    } catch (error) {
+      log.exec(`browser recovery ${key} failed: ${error.message}`)
+      return false
+    }
   }
 
   async describeInstalledApps(agent) {
@@ -365,6 +432,17 @@ export class DesktopTaskRunner {
       this.settings.grounding.lastPoint = null
     }
     if (decision.kind === 'navigate') {
+      const resetKey = resetNavigationKey(decision)
+      if (resetKey && this.resetNavigations.has(resetKey)) {
+        return {
+          calls: [{
+            tool: `${CUA_TOOL_PREFIX}browser_navigate`,
+            status: 'failed',
+            error: `reset navigation to ${resetKey} was already performed; continue from the current page without resetting task state`,
+          }],
+          response: `reset navigation to ${resetKey} was already performed; continue from the current page without resetting task state`,
+        }
+      }
       const execution = await navigateSite(this.ctx, agent, {
         sessionId: this.sessionId,
         url: decision.url,
@@ -376,6 +454,8 @@ export class DesktopTaskRunner {
         profile: this.settings.browserProfile,
       })
       if (execution.pageTarget) {
+        this.currentUrl = decision.url
+        if (resetKey) this.resetNavigations.add(resetKey)
         this.pageTarget = execution.pageTarget
         this.targetWindow = {
           pid: execution.pageTarget.pid,
@@ -414,27 +494,32 @@ export class DesktopTaskRunner {
         response: `window ${window.window_id} could not be brought to the front of the current display; it is probably minimized, hidden, or on another Space. Launch the application again or target a window that is visible.`,
       }
     }
-    if (decision.kind === 'select') {
-      return selectOption(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal)
+    this.internalDepth = (this.internalDepth ?? 0) + 1
+    try {
+      if (decision.kind === 'select') {
+        return selectOption(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal)
+      }
+      if (decision.kind === 'scroll') return scrollWindow(this.ctx, agent, decision, window, observation)
+      if (decision.kind === 'key') return pressChord(this.ctx, agent, decision, window, observation)
+      if (decision.kind === 'double_click') {
+        return clickVariant(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal, {
+          tool: 'double_click',
+          verb: 'Double-clicked',
+        })
+      }
+      if (decision.kind === 'right_click') {
+        return clickVariant(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal, {
+          tool: 'right_click',
+          verb: 'Right-clicked',
+        })
+      }
+      if (decision.kind === 'drag') {
+        return dragBetween(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal)
+      }
+      return operateUi(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal, this.pageTarget)
+    } finally {
+      this.internalDepth -= 1
     }
-    if (decision.kind === 'scroll') return scrollWindow(this.ctx, agent, decision, window, observation)
-    if (decision.kind === 'key') return pressChord(this.ctx, agent, decision, window, observation)
-    if (decision.kind === 'double_click') {
-      return clickVariant(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal, {
-        tool: 'double_click',
-        verb: 'Double-clicked',
-      })
-    }
-    if (decision.kind === 'right_click') {
-      return clickVariant(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal, {
-        tool: 'right_click',
-        verb: 'Right-clicked',
-      })
-    }
-    if (decision.kind === 'drag') {
-      return dragBetween(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal)
-    }
-    return operateUi(this.ctx, agent, this.settings, decision, window, observation, this.operation.signal)
   }
 
   async closePageSession(agent) {
@@ -505,6 +590,36 @@ export class DesktopTaskRunner {
       let finalResponse = ''
       let finalBlocked = false
       let unchangedCount = 0
+      const failureCounts = new Map()
+      let timeoutStreak = 0
+      let timeoutRecoveryAttempted = false
+      let roundHadTimeout = false
+      this.resetNavigations.clear()
+      this.recoveryCounts.clear()
+      this.currentUrl = null
+      const blockTask = reason => {
+        finalResponse = reason
+        finalBlocked = true
+        log.plan(`circuit breaker: ${reason}`)
+      }
+      const recordTimeout = async error => {
+        roundHadTimeout = true
+        timeoutStreak += 1
+        if (timeoutStreak === 1 && !timeoutRecoveryAttempted) {
+          timeoutRecoveryAttempted = true
+          try {
+            await callCuaTool(this.ctx, agent, 'start_session', { session: sessionId })
+            log.exec('driver timeout; session recovery attempted')
+          } catch (recoveryError) {
+            log.exec(`driver session recovery failed: ${recoveryError.message}`)
+          }
+        }
+        if (timeoutStreak >= 2) {
+          blockTask(`Desktop driver timed out repeatedly; last error: ${error}`)
+          return true
+        }
+        return false
+      }
 
       log.exec(`observation mode: ${this.settings.observationMode ?? 'hybrid'} | thinking mode: ${thinkingMode} | planner: ${this.settings.plannerEnabled ? 'enabled' : 'disabled'}`)
       const plan = this.settings.plannerEnabled
@@ -576,6 +691,7 @@ export class DesktopTaskRunner {
           break
         }
 
+        roundHadTimeout = false
         const beforeKey = observationKey(observation)
         const decisions = decision.kind === 'batch' ? decision.actions : [decision]
         if (decisions.length > 1) log.plan(`batch of ${decisions.length} actions in one round`)
@@ -644,15 +760,37 @@ export class DesktopTaskRunner {
                 : {},
             },
           })
-          if (step.execution.status === 'failed') break
+          if (step.execution.status === 'failed') {
+            const key = failureSignature(current, step.execution.response)
+            const count = (failureCounts.get(key) ?? 0) + 1
+            failureCounts.set(key, count)
+            if (count >= 3) {
+              blockTask(`The same action failed ${count} times: ${current.action || current.target || current.kind}. Last error: ${step.execution.response}`)
+              break
+            }
+            if (isTimeout(step.execution.response) && await recordTimeout(step.execution.response)) break
+            break
+          }
+          if (current.observeAfter === true && current !== decisions.at(-1)) {
+            log.exec(`batch observation after step ${steps.length}`)
+            observation = await this.observe(agent)
+          }
         }
+        if (finalBlocked) break
         if (steps.length > 0) {
           try {
             observation = await this.observe(agent)
           } catch (error) {
             log.exec(`observation after step ${steps.length} failed: ${error.message}`)
+            if (isTimeout(error.message) && await recordTimeout(error.message)) break
           }
         }
+        if (isTimeout(observation?.text) && await recordTimeout(observation.text)) break
+        if (!roundHadTimeout && observation?.data) {
+          timeoutStreak = 0
+          timeoutRecoveryAttempted = false
+        }
+        if (finalBlocked) break
         const intentionalWait = decisions.every(current => current.kind === 'wait')
         const unchanged = !intentionalWait && observationKey(observation) === beforeKey
         if (unchanged) {

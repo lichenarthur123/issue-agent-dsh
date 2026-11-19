@@ -63,7 +63,9 @@ function extractDecision(text) {
   try {
     return extractJsonObject(text, candidate => Array.isArray(candidate?.actions))
   } catch {
-    return extractJsonObject(text)
+    return extractJsonObject(text, candidate => candidate && [
+      'kind', 'action', 'done', 'blocked', 'invalid',
+    ].some(key => key in candidate))
   }
 }
 
@@ -182,6 +184,9 @@ export function parsePlannerDecision(text) {
   const rawValue = typeof decision.value === 'string' ? decision.value : ''
   let value = rawValue.replace(/^\s+/, '').replace(/[ \t]+$/, '') || lastNonEmptyField(text, 'value')
   const locate = decision.locate === 'ground' ? 'ground' : 'ax'
+  const expectedValue = decision.expect && ['string', 'number'].includes(typeof decision.expect.value)
+    ? String(decision.expect.value)
+    : null
   if (kind === 'navigate' && !/^https?:\/\//i.test(url)) {
     throw new Error('navigate requires a valid http(s) url')
   }
@@ -227,6 +232,8 @@ export function parsePlannerDecision(text) {
     response: '',
     ...kind === 'wait' ? { seconds: wait } : {},
     ...scroll ? scroll : {},
+    ...expectedValue !== null ? { expect: { value: expectedValue } } : {},
+    ...decision.observeAfter === true ? { observeAfter: true } : {},
     ...parseDecisionPoint(decision.point) ? { point: parseDecisionPoint(decision.point) } : {},
   }
 }

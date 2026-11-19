@@ -884,3 +884,131 @@ test('repeated targets get explicit feedback even when screenshots differ', asyn
   assert.match(prompts[3], /3 times/)
   assert.match(prompts[3], /double_click/)
 })
+
+test('the page ref guard only blocks model-issued calls, not internal typing', () => {
+  const runner = new DesktopTaskRunner({}, {})
+  runner.rememberWindows([{ pid: 1067, window_id: 17280 }])
+  runner.pageTarget = { session: 'amashop', pid: 1067, windowId: 17280 }
+  const browserType = { name: 'mcp__cua-driver-mcp__browser_type', arguments: { ref: 'p1:38', text: 'x', replace: true } }
+  assert.match(runner.validateExecutorCall(browserType), /page refs can expire during model inference/)
+  runner.internalDepth = 1
+  assert.equal(runner.validateExecutorCall(browserType), undefined)
+  runner.driverPids.add(1067)
+  assert.match(runner.validateExecutorCall({
+    name: 'mcp__cua-driver-mcp__click', arguments: { pid: 1067, window_id: 17280, x: 1, y: 1 },
+  }), /cannot target its own authorization process/)
+  runner.internalDepth = 0
+  assert.match(runner.validateExecutorCall(browserType), /page refs can expire during model inference/)
+})
+
+test('three identical action failures trip the circuit breaker', async t => {
+  const decision = { done: false, kind: 'action', action: 'Set quantity', target: '购买数量', value: '3', locate: 'ground', point: [100, 100] }
+  const h = harness(t, {
+    decisions: [decision, decision, decision, { done: true, response: '不应继续' }],
+    failTools: ['hotkey'],
+    failToolMessages: { hotkey: 'same input failure' },
+  })
+  h.runner.settings.groundingMode = 'executor'
+  h.runner.settings.observationMode = 'screenshot'
+  const result = await h.run()
+  assert.equal(result.status, 'unverified')
+  assert.equal(result.steps.length, 3)
+  assert.match(result.answer, /same action failed 3 times/)
+})
+
+test('a second repeated reset navigation is rejected without navigating', async t => {
+  const navigate = { done: false, kind: 'navigate', url: 'http://127.0.0.1:8765/#/home?reset=1' }
+  const h = harness(t, {
+    decisions: [navigate, navigate, { done: true, response: '结束' }],
+    plannerEnabled: false,
+  })
+  const result = await h.run()
+  assert.equal(result.steps.length, 2)
+  assert.equal(h.calls.filter(call => call.name === 'browser_navigate').length, 1)
+  assert.match(result.steps[1].execution.response, /already performed/)
+})
+
+test('repeated driver timeouts stop after one session recovery attempt', async t => {
+  const decision = { done: false, kind: 'action', action: 'Set quantity', target: '购买数量', value: '3', locate: 'ground', point: [100, 100] }
+  const h = harness(t, {
+    decisions: [decision, decision, { done: true, response: '不应继续' }],
+    failTools: ['hotkey'],
+    failToolMessages: { hotkey: 'TimeoutError: The operation was aborted due to timeout' },
+  })
+  h.runner.settings.groundingMode = 'executor'
+  h.runner.settings.observationMode = 'screenshot'
+  const result = await h.run()
+  assert.equal(result.status, 'unverified')
+  assert.equal(result.steps.length, 2)
+  assert.equal(h.calls.filter(call => call.name === 'start_session').length, 2)
+  assert.match(result.answer, /timed out repeatedly/)
+})
+
+test('observeAfter refreshes observation between batch actions', async t => {
+  const h = harness(t, {
+    decisions: [{
+      actions: [
+        { kind: 'key', value: 'cmd+a', observeAfter: true },
+        { kind: 'key', value: 'delete' },
+      ],
+    }, { done: true, response: '结束' }],
+    plannerEnabled: false,
+  })
+  let observations = 0
+  h.runner.observe = async () => ({
+    data: new Uint8Array([1]),
+    text: `state ${++observations}`,
+    ref: { mediaType: 'image/png', width: 1568, height: 1091 },
+    pid: 79854,
+    window_id: 17971,
+  })
+  const result = await h.run()
+  assert.equal(result.steps.length, 2)
+  assert.equal(observations, 3)
+})
+
+test('restore popup recovery uses an exact close action and is bounded', async () => {
+  const calls = []
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        calls.push(batch[0].name)
+        return { results: [{ result: { isError: false, value: {} } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  runner.pageTarget = { session: 's', targetId: 't', tabId: 'tab' }
+  runner.targetWindow = { pid: 1, window_id: 2 }
+  const observation = {
+    text: 'Restore pages',
+    snapshotId: 'snap',
+    elements: [{ role: 'AXButton', label: 'Close', element_token: 'close' }],
+  }
+  assert.equal(await runner.recoverBrowser({}, observation), true)
+  assert.equal(await runner.recoverBrowser({}, observation), true)
+  assert.equal(await runner.recoverBrowser({}, observation), false)
+  assert.deepEqual(calls, ['mcp__cua-driver-mcp__click', 'mcp__cua-driver-mcp__click'])
+})
+
+test('crash recovery reloads the current page only once without resetting state', async () => {
+  const calls = []
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        calls.push({ name: batch[0].name, args: JSON.parse(batch[0].arguments) })
+        return { results: [{ result: { isError: false, value: {} } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  runner.pageTarget = { session: 's', targetId: 't', tabId: 'tab' }
+  runner.targetWindow = { pid: 1, window_id: 2 }
+  runner.currentUrl = 'http://127.0.0.1:8765/#/home?reset=1'
+  assert.equal(await runner.recoverBrowser({}, { text: 'Aw, Snap' }), true)
+  assert.equal(await runner.recoverBrowser({}, { text: 'Aw, Snap' }), false)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].name, 'mcp__cua-driver-mcp__hotkey')
+  assert.deepEqual(calls[0].args.keys, ['cmd', 'r'])
+  assert.equal(calls[0].args.delivery_mode, 'foreground')
+})

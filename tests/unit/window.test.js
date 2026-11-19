@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { callCuaTool, ensureWindowVisible, renderElements } from '../../packages/desktop-agent/src/window.js'
+import { callCuaTool, captureWindow, ensureWindowVisible, renderElements } from '../../packages/desktop-agent/src/window.js'
 
 function harness(handler) {
   const calls = []
@@ -187,4 +187,75 @@ test('AX rendering deduplicates identical controls but preserves distinct positi
     { element_index: 3, role: 'AXButton', label: '删除', element_token: 's:3', frame: { x: 0, y: 100, w: 40, h: 20 } },
   ])
   assert.equal(text.match(/Button "删除"/g).length, 2)
+})
+
+test('a refused driver effect is reported as a failure, not a success', async () => {
+  const { ctx } = harness(() => ({
+    results: [{
+      result: {
+        isError: false,
+        value: {
+          effect: 'refused',
+          refusal: {
+            code: 'same_pid_keyboard_ambiguity',
+            escalation: { reason: 'multiple same-pid windows match the target' },
+          },
+        },
+      },
+    }],
+  }))
+  await assert.rejects(
+    callCuaTool(ctx, {}, 'press_key', { pid: 1, window_id: 2, key: 'a' }),
+    /press_key refused \(same_pid_keyboard_ambiguity\): multiple same-pid windows match the target/,
+  )
+})
+
+test('a structured refusal status is reported as a failure, not a success', async () => {
+  const { ctx } = harness(() => ({
+    results: [{
+      result: {
+        isError: false,
+        value: { structuredContent: { status: 'refused', message: 'window is not key' } },
+      },
+    }],
+  }))
+  await assert.rejects(
+    callCuaTool(ctx, {}, 'type_text', { pid: 1, window_id: 2, text: 'x' }),
+    /type_text refused \(refused\): window is not key/,
+  )
+})
+
+test('window capture extracts expanded business state JSON from raw AX elements', async () => {
+  const state = { cart: [{ productId: 'SKU-1001', qty: 3 }], orders: [], products: [], lastAction: '加入购物车 SKU-1001 × 3' }
+  const { ctx } = harness(() => ({
+    results: [{
+      result: {
+        isError: false,
+        value: {
+          structuredContent: {
+            screenshot_width: 100,
+            screenshot_height: 100,
+            elements: [{ role: 'AXStaticText', value: JSON.stringify(state) }],
+          },
+          content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }],
+        },
+      },
+    }],
+  }))
+  const observation = await captureWindow(ctx, {}, { pid: 1, window_id: 2 })
+  assert.deepEqual(JSON.parse(observation.stateJson), state)
+})
+
+test('a focused window remains usable when a browser popup is not ordinary', async () => {
+  const { ctx } = harness(() => ({
+    results: [{
+      result: {
+        isError: true,
+        content: [{ type: 'text', text: 'bring_to_front: exact window 2 was not verified (request_accepted=true, process_activated=true, focused=true, frontmost_ordinary=false)' }],
+      },
+    }],
+  }))
+  const result = await ensureWindowVisible(ctx, {}, { pid: 1, window_id: 2 })
+  assert.equal(result.focused, true)
+  assert.equal(result.popup, true)
 })

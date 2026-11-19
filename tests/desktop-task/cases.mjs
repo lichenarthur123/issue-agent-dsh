@@ -1,0 +1,287 @@
+const HOME = 'http://127.0.0.1:8765/#/home?reset=1'
+const SITE = 'http://127.0.0.1:8765'
+const RESET = '0) 打开后确认右上角购物车角标=0（URL 里的 reset=1 已自动清空演示数据）。'
+const STATE = '完成后展开页脚「自动化测试：查看当前业务状态」，把里面的 JSON 放在回复最后，用 json 代码块包裹。'
+const KEEP = '不要关闭浏览器，不要修改无关数据。'
+
+const body = lines => lines.join('\n')
+
+export const smokeCase = {
+  id: 'SMOKE',
+  number: 0,
+  title: '[SMOKE] 插件链路',
+  tags: ['smoke'],
+  timeoutSeconds: 180,
+  body: '只回答数字 2，不要操作桌面或浏览器。回复内容只包含数字 2。',
+  assertions: {
+    answer: ['2'],
+  },
+}
+
+export const cases = [
+  {
+    id: 'TC01',
+    number: 1,
+    title: '[TC01] 搜索·分类·排序',
+    tags: ['catalog', 'readonly'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 在顶部搜索框输入「耳机」并提交，确认商品中心显示「1 件商品」，结果只有 SKU-1001。',
+      '2) 回到商品中心，清空搜索框，分类选择「数码电子」，排序选择「价格从低到高」，点「筛选」。',
+      '3) 确认页面显示「2 件商品」，第一张商品卡是 SKU-1005「FitBand 运动手环」，价格 199.00；第二张是 SKU-1001「SoundCore 无线降噪耳机」，价格 399.00。',
+      '回复中必须原样包含：1 件商品、2 件商品、SKU-1005、SKU-1001、199.00、399.00。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'cart.length', equals: 0 },
+        { path: 'orders.length', equals: 1 },
+        { path: 'products.length', equals: 6 },
+        { path: 'lastAction', equals: '初始化' },
+      ],
+      answer: ['1 件商品', '2 件商品', 'SKU-1005', 'SKU-1001', '199.00', '399.00'],
+    },
+  },
+  {
+    id: 'TC02',
+    number: 2,
+    title: '[TC02] 详情页指定数量加购',
+    tags: ['cart'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 进入 SKU-1001「SoundCore 无线降噪耳机」详情页，把购买数量改为 3，点「加入购物车」。',
+      '2) 确认页面自动跳到购物车：该商品行数量=3，小计 1197.00，合计 1197.00，右上角购物车角标=3。',
+      '回复中必须原样包含：1197.00、数量=3。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'cart.length', equals: 1 },
+        { path: 'cart.0.productId', equals: 'SKU-1001' },
+        { path: 'cart.0.qty', equals: 3 },
+        { path: 'lastAction', equals: '加入购物车 SKU-1001 × 3' },
+      ],
+      answer: ['1197.00', '数量=3'],
+    },
+  },
+  {
+    id: 'TC03',
+    number: 3,
+    title: '[TC03] 购物车数量夹取与删除',
+    tags: ['cart'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 在商品中心把 SKU-1002「HomePlus 智能台灯」加入购物车（数量默认 1）。',
+      '2) 打开购物车，把该行数量输入框改成 15 并让输入框失焦，确认数量被夹到 10，合计 1690.00，角标=10。',
+      '3) 点该行「删除」，确认购物车为空、角标=0。',
+      '回复中必须原样包含：1690.00、数量=10。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'cart.length', equals: 0 },
+        { path: 'orders.length', equals: 1 },
+        { path: 'lastAction', equals: '移除购物车商品 SKU-1002' },
+      ],
+      answer: ['1690.00', '数量=10'],
+    },
+  },
+  {
+    id: 'TC04',
+    number: 4,
+    title: '[TC04] 发布 SKU 与必填校验',
+    tags: ['publish'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      `1) 打开 ${SITE}/#/publish，什么都不填直接点「确认上架」，确认页面没有跳转、商品总数仍为 6（出现浏览器必填提示即可）。`,
+      '2) 填写：商品名称「City 便携保温杯」；品牌「City」；分类「厨房用品」；售价 30；库存 5；描述「测试上架」。',
+      '3) 点「确认上架」，确认出现提示「商品 SKU-1007 已上架」并跳到 SKU-1007 详情页，价格 30.00、库存 5；商品中心显示 7 件商品。',
+      '回复中必须原样包含：SKU-1007、30.00、7 件商品。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'products.length', equals: 7 },
+        { path: 'products.6.id', equals: 'SKU-1007' },
+        { path: 'products.6.name', equals: 'City 便携保温杯' },
+        { path: 'products.6.price', equals: 30 },
+        { path: 'products.6.stock', equals: 5 },
+        { path: 'lastAction', equals: '上架 SKU-1007' },
+      ],
+      answer: ['SKU-1007', '30.00', '7 件商品'],
+    },
+  },
+  {
+    id: 'TC05',
+    number: 5,
+    title: '[TC05] 结算下单',
+    tags: ['checkout'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 打开 SKU-1004「Aroma 手冲咖啡套装」详情，把数量改为 2，加入购物车。',
+      '2) 去结算，保持默认收货信息，点「提交订单」。',
+      '3) 确认跳到订单详情：状态「运输中」，合计 258.00，购物车角标=0；订单列表共 2 条。',
+      '回复中必须原样包含：运输中、258.00。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'orders.length', equals: 2 },
+        { path: 'orders.1.status', equals: '运输中' },
+        { path: 'orders.1.total', equals: 258 },
+        { path: 'cart.length', equals: 0 },
+      ],
+      answer: ['运输中', '258.00'],
+    },
+  },
+  {
+    id: 'TC06',
+    number: 6,
+    title: '[TC06] 结算手机号校验',
+    tags: ['checkout', 'validation'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 打开 SKU-1006「Cloud 柔软记忆棉枕」详情，加入购物车 1 件（数量默认 1）。',
+      '2) 去结算，把手机号码改成 10 位「1380000000」，点「提交订单」。',
+      '3) 确认页面仍停留在「确认订单」，没有生成新订单（订单列表仍 1 条），购物车仍有 1 件。',
+      '4) 把手机号码改成「13900000000」，再点「提交订单」，确认成功：订单详情状态「运输中」，合计 99.00。',
+      '回复中必须原样包含：10 位、99.00、运输中。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'orders.length', equals: 2 },
+        { path: 'orders.1.status', equals: '运输中' },
+        { path: 'orders.1.total', equals: 99 },
+        { path: 'cart.length', equals: 0 },
+      ],
+      answer: ['10 位', '99.00', '运输中'],
+    },
+  },
+  {
+    id: 'TC07',
+    number: 7,
+    title: '[TC07] 订单查询与状态筛选',
+    tags: ['orders', 'readonly'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      `1) 打开 ${SITE}/#/orders，在「订单查询」输入 A20261001001 并查询，确认 1 条。`,
+      '2) 清空订单号，输入「耳机」并查询，确认 1 条（初始订单包含该商品）。',
+      '3) 清空查询，状态选择「运输中」查询，确认 1 条；状态选择「已签收」查询，确认 0 条并显示「没有找到订单」。',
+      '回复中必须原样包含：1 条、0 条、没有找到订单。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'orders.length', equals: 1 },
+        { path: 'orders.0.status', equals: '运输中' },
+        { path: 'cart.length', equals: 0 },
+      ],
+      answer: ['1 条', '0 条', '没有找到订单'],
+    },
+  },
+  {
+    id: 'TC08',
+    number: 8,
+    title: '[TC08] 签收确认框',
+    tags: ['orders', 'dialog'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      `1) 打开 ${SITE}/#/orders，进入订单 A20261001001 详情，点「确认签收」。`,
+      '2) 弹窗显示订单号后点「取消」，确认弹窗关闭、状态仍为「运输中」。',
+      '3) 再次点击页面上的「确认签收」打开弹窗，然后在弹窗里点「确认签收」，确认状态变为「已签收」、出现签收时间、时间线第三节点亮；订单列表该行也是「已签收」。',
+      '回复中必须原样包含：已签收、签收时间。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'orders.length', equals: 1 },
+        { path: 'orders.0.status', equals: '已签收' },
+        { path: 'orders.0.signedAt', exists: true },
+        { path: 'lastAction', equals: '签收 A20261001001' },
+      ],
+      answer: ['已签收', '签收时间'],
+    },
+  },
+  {
+    id: 'TC09',
+    number: 9,
+    title: '[TC09] 刷新持久化与重置',
+    tags: ['persistence'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 打开 SKU-1003「Trail 轻便双肩背包」详情，把数量改为 2，加入购物车，确认角标=2。',
+      '2) 按 Cmd+R 刷新页面，确认角标仍为 2，购物车该行数量仍为 2。',
+      '3) 点顶部导航栏的「重置演示数据」，在页面内的「重置演示数据」对话框里点「确定」，等刷新完成。',
+      '4) 确认角标=0、购物车为空、商品中心 6 件商品、订单列表 1 条「运输中」。',
+      '回复中必须原样包含：刷新后角标=2、重置后角标=0。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'cart.length', equals: 0 },
+        { path: 'orders.length', equals: 1 },
+        { path: 'orders.0.status', equals: '运输中' },
+        { path: 'products.length', equals: 6 },
+        { path: 'lastAction', equals: '初始化' },
+      ],
+      answer: ['刷新后角标=2', '重置后角标=0'],
+    },
+  },
+  {
+    id: 'TC10',
+    number: 10,
+    title: '[TC10] 缺货、空结果与非法路由',
+    tags: ['resilience', 'readonly'],
+    timeoutSeconds: 600,
+    body: body([
+      `打开 ${HOME}`,
+      RESET,
+      '1) 在商品中心找到 SKU-1005「FitBand 运动手环」，确认卡片显示「暂时缺货」且「加入购物车」按钮不可点（禁用）。',
+      '2) 进入 SKU-1005 详情页，确认同样显示「暂时缺货」，加入购物车按钮禁用。',
+      '3) 在商品中心搜索「不存在商品xyz」，确认显示「没有找到匹配商品」。',
+      `4) 直接访问 ${SITE}/#/product/SKU-9999 和 ${SITE}/#/foo，确认都显示「页面不存在」。`,
+      '回复中必须原样包含：暂时缺货、禁用、没有找到匹配商品、页面不存在。',
+      STATE,
+      KEEP,
+    ]),
+    assertions: {
+      state: [
+        { path: 'products.length', equals: 6 },
+        { path: 'cart.length', equals: 0 },
+        { path: 'orders.length', equals: 1 },
+        { path: 'lastAction', equals: '初始化' },
+      ],
+      answer: ['暂时缺货', '禁用', '没有找到匹配商品', '页面不存在'],
+    },
+  },
+]
+
+export const smokeCaseIds = ['TC02', 'TC05', 'TC08']

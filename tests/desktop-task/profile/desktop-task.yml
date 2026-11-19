@@ -1,0 +1,6 @@
+- id: git-issue-agent
+  disabled: true
+
+- insert:
+    - id: desktop-task-once
+      name: '@local/desktop-task-once'
