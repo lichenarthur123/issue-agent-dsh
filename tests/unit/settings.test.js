@@ -21,6 +21,27 @@ test('browser profile defaults to the local profile and supports isolated fallba
   assert.equal(resolveDesktopSettings({}, { DESKTOP_BROWSER_PROFILE_MODE: 'invalid' }).browserProfile.mode, 'existing_profile')
 })
 
+test('the grounder routes through the gateway with an api key and a long read timeout', () => {
+  const settings = resolveDesktopSettings({}, { GW_KEY: 'gw-key' })
+  assert.equal(settings.grounder.baseURL, 'http://39.97.8.6:8080/grounder/v1')
+  assert.equal(settings.grounder.apiKey, 'gw-key')
+  assert.equal(settings.grounder.timeoutMs, 600000)
+})
+
+test('grounder settings honor apiKeyEnv, explicit key, and LAN fallbacks', () => {
+  const config = { grounder: { baseURL: 'http://gw/grounder/v1', apiKeyEnv: 'SOME_KEY', timeoutMs: 120000 } }
+  assert.equal(resolveDesktopSettings(config, { SOME_KEY: 'k' }).grounder.apiKey, 'k')
+  assert.equal(resolveDesktopSettings(config, { DESKTOP_GROUNDER_API_KEY: 'direct' }).grounder.apiKey, 'direct')
+  assert.equal(resolveDesktopSettings(config, { DESKTOP_GROUNDER_TIMEOUT_SECONDS: '30' }).grounder.timeoutMs, 30000)
+  assert.equal(resolveDesktopSettings(config, {}).grounder.timeoutMs, 120000)
+  const lan = resolveDesktopSettings(
+    { grounder: { baseURL: 'http://10.10.10.1:8003/v1' } },
+    { DESKTOP_GROUNDER_API_KEY_ENV: '' },
+  )
+  assert.equal(lan.grounder.baseURL, 'http://10.10.10.1:8003/v1')
+  assert.equal('apiKey' in lan.grounder, false)
+})
+
 test('local memory is off by default and its lesson cap is configurable', () => {
   const defaults = resolveDesktopSettings({}, {})
   assert.equal(defaults.memoryEnabled, false)

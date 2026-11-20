@@ -7,6 +7,12 @@ cd "$ROOT"
 export PATH="$ROOT/.tools/node/bin:$ROOT/node_modules/.bin:$ROOT/.tools/bin:$PATH"
 export DSH_HOME="${DSH_HOME:-$ROOT/.tools/dsh-home}"
 
+if [ -f "$HOME/.workbench/relay.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$HOME/.workbench/relay.env"
+  set +a
+fi
 if [ -f "$ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091

@@ -58,7 +58,10 @@ const child = spawn('dsh', ['--profile', 'issue-agent'], {
     AGENT_STATE_DIR: stateDir,
     AGENT_TASK_TIMEOUT_SECONDS: '120',
     DESKTOP_LOCAL_API_KEY: 'local',
-    ...(process.env.E2E_USE_LOCAL === '1' ? {} : {
+    ...(process.env.E2E_USE_LOCAL === '1' ? {
+      DESKTOP_PLANNER_PROVIDER: 'spark-planner-local',
+      DESKTOP_EXECUTOR_PROVIDER: 'spark-executor-local',
+    } : {
       DESKTOP_PLANNER_PROVIDER: 'alicloud',
       DESKTOP_PLANNER_MODEL: 'deepseek-v4.1-flash',
       DESKTOP_EXECUTOR_PROVIDER: 'alicloud',

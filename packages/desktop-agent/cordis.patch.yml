@@ -24,8 +24,11 @@
         memoryRoot: memory
         memoryMaxLessons: 20
         grounder:
-          baseURL: http://10.10.10.1:8003/v1
+          # 阿里云公网网关（DGX Spark）；本机局域网直连可改回 http://10.10.10.1:8003/v1
+          baseURL: http://39.97.8.6:8080/grounder/v1
           model: ui-tars-1.5-7b
+          apiKeyEnv: GW_KEY
+          timeoutMs: 600000
         budget:
           maxDesktopCalls: 1000
           maxObservationCalls: 400

@@ -89,15 +89,16 @@ chmod 600 .env
 编辑 `.env`：
 
 - `CUA_MODEL_API_KEY`、`CUA_MODEL_BASE_URL`、`CUA_MODEL_NAME`：DSH 默认云模型。
-- `DESKTOP_LOCAL_API_KEY`：本地 OpenAI 兼容服务的非空占位 key，默认 `local`。
+- `DESKTOP_LOCAL_API_KEY`：本地 OpenAI 兼容服务的非空占位 key，默认 `local`（仅回滚到局域网直连时使用）。
+- `GW_KEY`：阿里云公网网关的 API Key，也可放在 `~/.workbench/relay.env` 的 `GW_KEY=` 一行，`issue-agent.sh` 和 `scripts/doctor-macos.sh` 会自动加载。
 - `GITHUB_REPOSITORY`、`GITHUB_TOKEN`：仅在验收完成后需要轮询时配置。
 
 同时核对两个文件中的服务地址：
 
-- `profiles/issue-agent/cordis.patch.yml`：`spark-executor`、`spark-planner` 的 baseURL 和模型 ID。
-- `packages/desktop-agent/cordis.patch.yml`：Executor/Planner 的模型、Grounder 的 baseURL 和模型 ID。
+- `profiles/issue-agent/cordis.patch.yml`：`spark-executor`、`spark-planner` 的 baseURL 和模型 ID（默认走 `http://39.97.8.6:8080/vision/v1`；`spark-executor-local`、`spark-planner-local` 是局域网回滚路由）。
+- `packages/desktop-agent/cordis.patch.yml`：Executor/Planner 的模型、Grounder 的 baseURL（默认走 `http://39.97.8.6:8080/grounder/v1`）、模型 ID 和 `apiKeyEnv`。
 
-当前实现中这些 profile 值不是 `.env` 插值，必须按目标环境修改。Executor 需要文本+图片输入；Grounder 默认 `ui-tars-1.5-7b`。不要把真实 `.env` 提交到 Git。
+当前实现中这些 profile 值不是 `.env` 插值，必须按目标环境修改。Executor 需要文本+图片输入；Grounder 默认 `ui-tars-1.5-7b`。网关要求 `X-Api-Key` 或 `Authorization: Bearer`，读超时 600s。不要把真实 `.env` 提交到 Git。
 
 先检查不依赖模型的安装状态：
 

@@ -16,7 +16,7 @@ click(point='<point>x1 y1</point>')
 
 export function parseGroundingPoint(text, width, height) {
   const match = /<point>\s*(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)\s*<\/point>/i.exec(text)
-    ?? /(?:point|start_box)\s*=\s*['"]?\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)['"]?/i.exec(text)
+    ?? /(?:point|start_box)\s*=\s*['"]?[\(\[]\s*(-?\d+(?:\.\d+)?)\s*[\s,]\s*(-?\d+(?:\.\d+)?)\s*[\)\]]/i.exec(text)
   if (!match) throw new Error('grounder returned no click point')
   const x = Math.round(Number(match[1]))
   const y = Math.round(Number(match[2]))
@@ -27,6 +27,14 @@ export function parseGroundingPoint(text, width, height) {
 }
 
 const DROPDOWN_RULE = 'If a dropdown menu or popup is open, click the matching option inside that menu or popup; never click identical text elsewhere on the page, in cards, or in filter chips.'
+
+// The gateway rejects request bodies above this size; fail locally with a clear message.
+const MAX_REQUEST_BYTES = 100 * 1024 * 1024
+
+function requestSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
 
 function cropAround(anchor) {
   const width = anchor.width ?? 1568
@@ -54,7 +62,7 @@ export async function groundUi(ctx, agent, settings, { pid, window_id, instructi
     ? `\nreference_point: (${reference.x},${reference.y}). The target is near this reference point; choose the closest matching element to it and never pick a same-named element far away.`
     : ''}`
 
-  const ask = async image => {
+  const requestPoint = async image => {
     const startedAt = logModelStart(settings.grounder, {
       parts: {
         sys: Buffer.byteLength(GROUNDING_PROMPT),
@@ -62,54 +70,93 @@ export async function groundUi(ctx, agent, settings, { pid, window_id, instructi
         image: image.data?.byteLength ?? 0,
       },
     })
+    const body = JSON.stringify({
+      model: settings.grounder.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: `${GROUNDING_PROMPT}${text}` },
+          { type: 'image_url', image_url: { url: `data:${image.ref.mediaType};base64,${Buffer.from(image.data).toString('base64')}` } },
+        ],
+      }],
+      max_tokens: 100,
+      temperature: 0,
+    })
+    const bodyBytes = Buffer.byteLength(body)
+    if (bodyBytes > MAX_REQUEST_BYTES) {
+      throw new Error(`grounder request body is ${bodyBytes}B, above the 100MB gateway limit`)
+    }
     const response = await fetch(`${settings.grounder.baseURL}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: settings.grounder.model,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: `${GROUNDING_PROMPT}${text}` },
-            { type: 'image_url', image_url: { url: `data:${image.ref.mediaType};base64,${Buffer.from(image.data).toString('base64')}` } },
-          ],
-        }],
-        max_tokens: 100,
-        temperature: 0,
-      }),
-      signal,
+      headers: {
+        'content-type': 'application/json',
+        ...settings.grounder.apiKey ? { 'x-api-key': settings.grounder.apiKey } : {},
+      },
+      body,
+      signal: requestSignal(signal, settings.grounder.timeoutMs ?? 600000),
     })
     if (!response.ok) throw new Error(`grounder HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`)
     const payload = await response.json()
     const content = payload.choices?.[0]?.message?.content ?? ''
     logModelEnd(settings.grounder, startedAt, payload.usage, content)
+    return parseGroundingPoint(content, image.ref.width, image.ref.height)
+  }
+
+  const ask = async () => {
     try {
-      return parseGroundingPoint(content, image.ref.width, image.ref.height)
+      return await requestPoint(stored)
     } catch (error) {
       if (!usedZoom) throw error
+      // Crop coordinates only make sense inside the crop; ask again with the full
+      // screenshot instead of reusing the crop-space answer.
       log.ground(`${error.message}; retrying with the full screenshot`)
       usedZoom = false
-      const full = await captureWindow(ctx, agent, { pid, window_id, maxElements: 1 })
-      return parseGroundingPoint(content, full.ref.width, full.ref.height)
+      stored = await captureWindow(ctx, agent, { pid, window_id, maxElements: 1 })
+      return requestPoint(stored)
     }
   }
 
-  let point = await ask(stored)
+  let point = await ask()
   if (reference && !usedZoom) {
     const distance = Math.hypot(point.x - reference.x, point.y - reference.y)
-    if (distance > 450) {
+    const anchor = targetOf(instruction)
+    const previous = settings.grounding
+    // A tiny model that cannot find the control often returns the same pixel for
+    // several different labels. That answer is unusable, so ask again on a crop.
+    const collapsed = Boolean(previous?.lastPoint)
+      && Boolean(anchor)
+      && Boolean(previous.lastTarget)
+      && anchor !== previous.lastTarget
+      && Math.hypot(point.x - previous.lastPoint.x, point.y - previous.lastPoint.y) <= 8
+    if (collapsed) {
+      log.ground(`grounder repeated (${point.x},${point.y}) for "${anchor}" after "${previous.lastTarget}"; retrying on a zoom crop`)
+    } else if (distance > 450) {
       log.ground(`point is ${Math.round(distance)}px from the reference; retrying with a zoom crop`)
-      usedZoom = true
-      stored = await captureWindow(ctx, agent, { pid, window_id, maxElements: 1, crop: cropAround(reference) })
-      point = await ask(stored)
+    } else {
+      log.ground(`point=(${point.x},${point.y}) window=${point.width}x${point.height}`)
+      if (settings.grounding) {
+        settings.grounding.lastPoint = { x: point.x, y: point.y, width: point.width, height: point.height }
+        settings.grounding.lastTarget = anchor
+      }
+      return point
     }
+    usedZoom = true
+    stored = await captureWindow(ctx, agent, { pid, window_id, maxElements: 1, crop: cropAround(reference) })
+    point = await ask(stored)
   }
   log.ground(`point=(${point.x},${point.y}) window=${point.width}x${point.height}${usedZoom ? ' from_zoom' : ''}`)
   if (usedZoom) return { ...point, fromZoom: true }
   if (settings.grounding) {
     settings.grounding.lastPoint = { x: point.x, y: point.y, width: point.width, height: point.height }
+    settings.grounding.lastTarget = targetOf(instruction)
   }
   return point
+}
+
+function targetOf(instruction) {
+  const text = String(instruction ?? '')
+  const index = text.indexOf(':')
+  return (index === -1 ? text : text.slice(index + 1)).trim()
 }
 
 export function registerGrounder(ctx, settings) {

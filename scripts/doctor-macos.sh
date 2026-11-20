@@ -65,6 +65,11 @@ else
   fail "issue-agent local package link is missing; run bash scripts/prepare-profiles.sh"
 fi
 
+if [ -f "$HOME/.workbench/relay.env" ]; then
+  set -a
+  source "$HOME/.workbench/relay.env"
+  set +a
+fi
 if [ -f "$ROOT/.env" ]; then
   set -a
   source "$ROOT/.env"
@@ -85,10 +90,19 @@ fi
 if [ "$SKIP_MODEL" -eq 0 ]; then
   while IFS= read -r base; do
     case "$base" in
+      http://10.10.10.1*)
+        ok "LAN fallback model endpoint configured (not probed): $base"
+        ;;
       http://*|https://*)
         api_key="${DESKTOP_LOCAL_API_KEY:-local}"
-        if [ "$base" = "${CUA_MODEL_BASE_URL:-}" ]; then api_key="${CUA_MODEL_API_KEY:-}"; fi
-        if curl -fsS --max-time 8 -H "Authorization: Bearer $api_key" "$base/models" >/dev/null 2>&1; then
+        auth_header="Authorization: Bearer $api_key"
+        if [ "$base" = "${CUA_MODEL_BASE_URL:-}" ]; then api_key="${CUA_MODEL_API_KEY:-}"; auth_header="Authorization: Bearer $api_key"; fi
+        case "$base" in
+          *39.97.8.6*) api_key="${GW_KEY:-}"; auth_header="X-Api-Key: $api_key" ;;
+        esac
+        if [ -z "$api_key" ]; then
+          warn "gateway API key is not set (GW_KEY); skipped: $base/models"
+        elif curl -fsS --max-time 8 -H "$auth_header" "$base/models" >/dev/null 2>&1; then
           ok "model endpoint responds: $base/models"
         else
           fail "model endpoint is unavailable: $base/models"

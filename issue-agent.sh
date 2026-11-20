@@ -3,6 +3,10 @@ set -e
 cd "$(dirname "$0")"
 export PATH="$PWD/.tools/node/bin:$PWD/node_modules/.bin:$PWD/.tools/bin:$PATH"
 export DSH_HOME="$PWD/.tools/dsh-home"
+# 网关 key 只放在仓库外；存在时先加载，随后 .env 可覆盖。
+if [ -f "$HOME/.workbench/relay.env" ]; then
+  set -a; source "$HOME/.workbench/relay.env"; set +a
+fi
 set -a; source .env; set +a
 export DESKTOP_THINKING_MODE="${DESKTOP_THINKING_MODE:-always}"
 

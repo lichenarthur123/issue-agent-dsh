@@ -12,6 +12,13 @@ function positiveInt(value, fallback) {
   return Number.isFinite(number) ? Math.max(1, Math.floor(number)) : fallback
 }
 
+function timeoutOf(config, env, prefix, fallbackMs) {
+  const seconds = Number(env[`DESKTOP_${prefix}_TIMEOUT_SECONDS`])
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000
+  const ms = Number(config.timeoutMs)
+  return Number.isFinite(ms) && ms > 0 ? ms : fallbackMs
+}
+
 export function resolveDesktopSettings(config = {}, env = process.env) {
   const browserProfileMode = env.DESKTOP_BROWSER_PROFILE_MODE ?? config.browserProfileMode ?? 'existing_profile'
   const executor = route(config.executor ?? {}, env, 'EXECUTOR', {
@@ -21,6 +28,10 @@ export function resolveDesktopSettings(config = {}, env = process.env) {
   executor.coordinateSpace = env.DESKTOP_EXECUTOR_COORDINATE_SPACE
     ?? config.executor?.coordinateSpace
     ?? 'pixels'
+  const grounderConfig = config.grounder ?? {}
+  const grounderKeyEnv = env.DESKTOP_GROUNDER_API_KEY_ENV ?? grounderConfig.apiKeyEnv ?? 'GW_KEY'
+  const grounderApiKey = env.DESKTOP_GROUNDER_API_KEY
+    ?? (grounderKeyEnv ? env[grounderKeyEnv] : undefined)
   return {
     artifactRoot: resolve(env.AGENT_ARTIFACT_ROOT ?? config.artifactRoot ?? 'artifacts/native'),
     cwd: resolve(env.AGENT_CWD ?? config.cwd ?? process.cwd()),
@@ -63,8 +74,10 @@ export function resolveDesktopSettings(config = {}, env = process.env) {
     memoryRoot: resolve(env.DESKTOP_MEMORY_ROOT ?? config.memoryRoot ?? 'memory'),
     memoryMaxLessons: positiveInt(env.DESKTOP_MEMORY_MAX_LESSONS ?? config.memoryMaxLessons, 20),
     grounder: {
-      baseURL: (env.DESKTOP_GROUNDER_BASE_URL ?? config.grounder?.baseURL ?? 'http://10.10.10.1:8003/v1').replace(/\/+$/, ''),
-      model: env.DESKTOP_GROUNDER_MODEL ?? config.grounder?.model ?? 'ui-tars-1.5-7b',
+      baseURL: (env.DESKTOP_GROUNDER_BASE_URL ?? grounderConfig.baseURL ?? 'http://39.97.8.6:8080/grounder/v1').replace(/\/+$/, ''),
+      model: env.DESKTOP_GROUNDER_MODEL ?? grounderConfig.model ?? 'ui-tars-1.5-7b',
+      timeoutMs: timeoutOf(grounderConfig, env, 'GROUNDER', 600000),
+      ...grounderApiKey ? { apiKey: grounderApiKey } : {},
     },
   }
 }
