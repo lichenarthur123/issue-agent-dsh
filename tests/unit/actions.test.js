@@ -12,6 +12,7 @@ import {
 } from '../../packages/desktop-agent/src/actions.js'
 import { DesktopTaskRunner } from '../../packages/desktop-agent/src/task-runner.js'
 import { groundUi } from '../../packages/desktop-agent/src/grounder.js'
+import { groundingAttachments, groundingLlm } from './helpers/grounding-llm.js'
 
 test('browser navigation uses real window, target, and tab identifiers', async () => {
   const calls = []
@@ -445,11 +446,11 @@ test('an isolated browser state binding error rebuilds the session once', async 
 })
 
 test('browser input uses the grounding coordinates without another model rewrite', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(point='(231,219)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const call = batch[0]
@@ -465,7 +466,7 @@ test('browser input uses the grounding coordinates without another model rewrite
       },
     },
   }
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
   const execution = await operateUi(ctx, {}, settings, {
     action: 'type', target: '商品名称', value: '成人纸尿裤', locate: 'ground',
   }, { pid: 79854, window_id: 17971 })
@@ -492,11 +493,11 @@ test('browser input uses the grounding coordinates without another model rewrite
 
 
 test('a click decision with a value types into the field', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(start_box='(414,504)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(start_box='(414,504)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const call = batch[0]
@@ -512,7 +513,7 @@ test('a click decision with a value types into the field', async t => {
       },
     },
   }
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
   const execution = await operateUi(ctx, {}, settings, {
     action: 'click', target: '商品名称', value: '30元成人纸尿裤', locate: 'ground',
   }, { pid: 93552, window_id: 18464 })
@@ -780,12 +781,12 @@ test('a dropdown is driven by accessibility tokens without screenshot coordinate
 
 
 test('a dropdown falls back to visual grounding when the menu is not in the AX tree', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(300,350)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(point='(300,350)')")
   const calls = []
   let captures = 0
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const call = batch[0]
@@ -813,7 +814,7 @@ test('a dropdown falls back to visual grounding when the menu is not in the AX t
       },
     },
   }
-  const execution = await selectOption(ctx, {}, { grounder: { baseURL: 'http://grounder', model: 'ui-tars' } }, {
+  const execution = await selectOption(ctx, {}, { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }, {
     action: 'select', target: '分类 *', value: '家居生活',
   }, { pid: 94262, window_id: 18506 }, {
     elements: dropdownElements('数码电子'),
@@ -854,11 +855,11 @@ test('browser navigation recovery reuses the existing isolated tab', async () =>
   })
 })
 test('a trailing newline types the text and presses return', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(start_box='(700,1200)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(start_box='(700,1200)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const call = batch[0]
@@ -874,7 +875,7 @@ test('a trailing newline types the text and presses return', async t => {
       },
     },
   }
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
   const execution = await operateUi(ctx, {}, settings, {
     action: 'type', target: '终端窗口输入区域', value: 'open -a Lark\n', locate: 'ground',
   }, { pid: 1067, window_id: 17280 })
@@ -949,7 +950,10 @@ test('scroll targets the matching AX area and falls back to the focused region',
   const window = { pid: 85726, window_id: 8228 }
   const observation = {
     snapshotId: 'snap-1',
-    elements: [{ role: 'AXScrollArea', label: '任务明细', element_token: 'snap:9', in_web_content: true }],
+    elements: [
+      { role: 'AXScrollArea', label: '任务明细', element_token: 'snap:9', in_web_content: true },
+      { role: 'AXStaticText', label: 'Homepage ( g then d )', element_token: 'snap:10', in_web_content: true },
+    ],
   }
   const targeted = await scrollWindow(ctx, {}, { target: '任务明细', direction: 'down', amount: 3, by: 'line' }, window, observation)
   assert.match(targeted.response, /Scrolled down 3 line in 任务明细/)
@@ -967,14 +971,17 @@ test('scroll targets the matching AX area and falls back to the focused region',
   assert.match(fallback.response, /no AX match/)
   assert.equal(calls[1].args.element_token, undefined)
   assert.equal(calls[1].args.by, 'page')
+  const viewport = await scrollWindow(ctx, {}, { target: 'page', direction: 'down', amount: 5, by: 'line' }, window, observation)
+  assert.equal(calls[2].args.element_token, undefined)
+  assert.equal(viewport.response, 'Scrolled down 5 line (no AX match for page; used the focused region)')
 })
 
 test('a grounded double-click escalates to foreground delivery', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(start_box='(420,300)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(start_box='(420,300)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -989,7 +996,7 @@ test('a grounded double-click escalates to foreground delivery', async t => {
       },
     },
   }
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
   const execution = await clickVariant(ctx, {}, settings, {
     target: '文件', locate: 'ground',
   }, { pid: 93552, window_id: 18464 }, {}, undefined, { tool: 'double_click', verb: 'Double-clicked' })
@@ -1004,6 +1011,65 @@ test('a grounded double-click escalates to foreground delivery', async t => {
       delivery_mode: 'foreground',
     },
   })
+})
+
+test('a grounder parse failure fails the click step instead of the task', async t => {
+  const llm = groundingLlm("Action: click(start_box='(6光照地动, 400)')")
+  const calls = []
+  const ctx = {
+    llm,
+    attachments: groundingAttachments(),
+    tools: {
+      execute: async ({ calls: batch }) => {
+        calls.push(batch[0].name)
+        const value = batch[0].name.endsWith('get_window_state')
+          ? {
+              structuredContent: { screenshot_width: 1568, screenshot_height: 1087 },
+              content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }],
+            }
+          : {}
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
+  const execution = await clickVariant(ctx, {}, settings, {
+    target: '14:00', locate: 'ground',
+  }, { pid: 93552, window_id: 18464 }, {}, undefined, { tool: 'double_click', verb: 'Double-clicked' })
+  assert.match(execution.response, /no click point/)
+  assert.equal(execution.calls.length, 1)
+  assert.equal(execution.calls[0].status, 'failed')
+  assert.equal(execution.calls[0].tool, 'mcp__cua-driver-mcp__double_click')
+  assert.ok(!calls.includes('mcp__cua-driver-mcp__double_click'))
+})
+
+test('a grounded double-click forwards the executor point and re-grounds a collapsed answer', async t => {
+  const answers = ["Action: click(point='(63,767)')", "Action: click(point='(250,180)')"]
+  const llm = groundingLlm(answers)
+  const calls = []
+  const ctx = {
+    llm,
+    attachments: groundingAttachments(),
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name
+        calls.push(name)
+        const value = name.endsWith('zoom')
+          ? { structuredContent: { width: 500, height: 361 }, content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/jpeg' }] }
+          : { structuredContent: { screenshot_width: 1568, screenshot_height: 1003 }, content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }] }
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const settings = {
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
+    grounding: { lastPoint: { x: 63, y: 767, width: 1568, height: 1003 }, lastTarget: '14:00 time slot' },
+  }
+  const execution = await clickVariant(ctx, {}, settings, {
+    target: '14:00 time slot in day view', locate: 'ground', point: { x: 300, y: 635 },
+  }, { pid: 93552, window_id: 18464 }, { ref: { width: 1568, height: 1003 } }, undefined, { tool: 'double_click', verb: 'Double-clicked' })
+  assert.match(execution.response, /Double-clicked 14:00 time slot in day view at \(250,180\) from_zoom/)
+  assert.deepEqual(calls, ['mcp__cua-driver-mcp__get_window_state', 'mcp__cua-driver-mcp__zoom', 'mcp__cua-driver-mcp__double_click'])
 })
 
 test('drag resolves both labels to window-local points', async () => {
@@ -1122,15 +1188,11 @@ test('screenshot mode forces grounded actions and leaves other kinds alone', () 
 })
 
 test('an option click zooms into the dropdown and constrains the grounding instruction', async t => {
-  let requestBody = null
-  t.mock.method(globalThis, 'fetch', async (url, init) => {
-    requestBody = JSON.parse(init.body)
-    return new Response(JSON.stringify({
-      choices: [{ message: { content: "Action: click(point='(120,240)')" } }],
-    }), { status: 200 })
-  })
+  const llm = groundingLlm("Action: click(point='(120,240)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -1143,7 +1205,7 @@ test('an option click zooms into the dropdown and constrains the grounding instr
     },
   }
   const settings = {
-    grounder: { baseURL: 'http://localhost', model: 'ui-tars' },
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
     grounding: { lastPoint: { x: 940, y: 657, width: 1568, height: 980 } },
   }
   await operateUi(ctx, {}, settings, {
@@ -1154,17 +1216,17 @@ test('an option click zooms into the dropdown and constrains the grounding instr
   const zoom = calls.find(call => call.name.endsWith('zoom'))
   assert.deepEqual(zoom.args, { pid: 85726, window_id: 8228, x1: 580, y1: 460, x2: 1300, y2: 980 })
   assert.equal(calls.at(-1).args.from_zoom, true)
-  const prompt = requestBody.messages[0].content[0].text
+  const prompt = llm.calls[0].messages[0].content[0].text
   assert.match(prompt, /task label dropdown/)
   assert.match(prompt, /never click identical text elsewhere/)
 })
 
 test('a plain grounded click uses the full screenshot and records the anchor', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(420,300)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(point='(420,300)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -1176,7 +1238,7 @@ test('a plain grounded click uses the full screenshot and records the anchor', a
       },
     },
   }
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' }, grounding: {} }
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' }, grounding: {} }
   await operateUi(ctx, {}, settings, { action: 'click 保存', target: '保存', locate: 'ground' }, { pid: 1, window_id: 2 }, {})
   assert.ok(!calls.some(call => call.name.endsWith('zoom')))
   assert.equal(calls.at(-1).args.from_zoom, undefined)
@@ -1184,10 +1246,10 @@ test('a plain grounded click uses the full screenshot and records the anchor', a
 })
 
 test('zoom dimensions are read from structuredContent', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(120,240)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(point='(120,240)')")
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async () => ({
         results: [{
@@ -1202,7 +1264,7 @@ test('zoom dimensions are read from structuredContent', async t => {
       }),
     },
   }
-  const point = await groundUi(ctx, {}, { grounder: { baseURL: 'http://localhost', model: 'ui-tars' }, grounding: {} }, {
+  const point = await groundUi(ctx, {}, { grounder: { provider: 'spark-grounder', model: 'ui-tars' }, grounding: {} }, {
     pid: 1, window_id: 2, instruction: 'click: 重要紧急', anchor: { x: 940, y: 657, width: 1568, height: 980 },
   })
   assert.equal(point.fromZoom, true)
@@ -1210,11 +1272,11 @@ test('zoom dimensions are read from structuredContent', async t => {
 })
 
 test('a zoom without dimensions falls back to the full screenshot', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(120,240)')" } }],
-  }), { status: 200 }))
+  const llm = groundingLlm("Action: click(point='(120,240)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -1226,7 +1288,7 @@ test('a zoom without dimensions falls back to the full screenshot', async t => {
       },
     },
   }
-  const point = await groundUi(ctx, {}, { grounder: { baseURL: 'http://localhost', model: 'ui-tars' }, grounding: {} }, {
+  const point = await groundUi(ctx, {}, { grounder: { provider: 'spark-grounder', model: 'ui-tars' }, grounding: {} }, {
     pid: 1, window_id: 2, instruction: 'click: 重要紧急', anchor: { x: 940, y: 657, width: 1568, height: 980 },
   })
   assert.equal(point.fromZoom, undefined)
@@ -1234,9 +1296,11 @@ test('a zoom without dimensions falls back to the full screenshot', async t => {
 })
 
 test('an executor supplied point bypasses the grounder entirely', async t => {
-  t.mock.method(globalThis, 'fetch', async () => { throw new Error('grounder must not be called') })
+  const llm = groundingLlm(() => { throw new Error('grounder must not be called') })
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         calls.push({ name: batch[0].name, args: JSON.parse(batch[0].arguments) })
@@ -1244,19 +1308,20 @@ test('an executor supplied point bypasses the grounder entirely', async t => {
       },
     },
   }
-  await operateUi(ctx, {}, { groundingMode: 'executor', grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }, {
+  await operateUi(ctx, {}, { groundingMode: 'executor', grounder: { provider: 'spark-grounder', model: 'ui-tars' } }, {
     action: 'click 重要紧急', target: '重要紧急', locate: 'ground', point: { x: 940, y: 657 },
   }, { pid: 85726, window_id: 8228 }, {})
   assert.deepEqual(calls.map(call => call.name), ['mcp__cua-driver-mcp__click'])
   assert.deepEqual(calls[0].args, { pid: 85726, window_id: 8228, x: 940, y: 657, delivery_mode: 'foreground' })
 })
 
-test('an out-of-range zoom point retries with the full screenshot', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(start_box='(518,208)')" } }],
-  }), { status: 200 }))
+test('an out-of-range zoom point is re-grounded on the full screenshot', async t => {
+  const answers = ["Action: click(start_box='(518,208)')", "Action: click(point='(1300,800)')"]
+  const llm = groundingLlm(answers)
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -1268,24 +1333,21 @@ test('an out-of-range zoom point retries with the full screenshot', async t => {
       },
     },
   }
-  const point = await groundUi(ctx, {}, { grounder: { baseURL: 'http://localhost', model: 'ui-tars' }, grounding: {} }, {
+  const point = await groundUi(ctx, {}, { grounder: { provider: 'spark-grounder', model: 'ui-tars' }, grounding: {} }, {
     pid: 1, window_id: 2, instruction: 'click: 重要紧急', anchor: { x: 940, y: 657, width: 1568, height: 980 },
   })
   assert.equal(point.fromZoom, undefined)
-  assert.deepEqual([point.x, point.y], [518, 208])
+  assert.deepEqual([point.x, point.y], [1300, 800])
+  assert.equal(llm.calls.length, 2)
   assert.deepEqual(calls, ['mcp__cua-driver-mcp__zoom', 'mcp__cua-driver-mcp__get_window_state'])
 })
 
 test('a reference point is forwarded to the grounder and refined', async t => {
-  let requestBody = null
-  t.mock.method(globalThis, 'fetch', async (url, init) => {
-    requestBody = JSON.parse(init.body)
-    return new Response(JSON.stringify({
-      choices: [{ message: { content: "Action: click(point='(951,660)')" } }],
-    }), { status: 200 })
-  })
+  const llm = groundingLlm("Action: click(point='(951,660)')")
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         calls.push({ name: batch[0].name, args: JSON.parse(batch[0].arguments) })
@@ -1297,10 +1359,10 @@ test('a reference point is forwarded to the grounder and refined', async t => {
       },
     },
   }
-  await operateUi(ctx, {}, { groundingMode: 'auto', grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }, {
+  await operateUi(ctx, {}, { groundingMode: 'auto', grounder: { provider: 'spark-grounder', model: 'ui-tars' } }, {
     action: 'click 重要紧急', target: '重要紧急', locate: 'ground', point: { x: 940, y: 657 },
   }, { pid: 85726, window_id: 8228 }, {})
-  assert.match(requestBody.messages[0].content[0].text, /reference_point: \(940,657\)/)
+  assert.match(llm.calls[0].messages[0].content[0].text, /reference_point: \(940,657\)/)
   assert.deepEqual(calls.map(call => call.name), ['mcp__cua-driver-mcp__get_window_state', 'mcp__cua-driver-mcp__click'])
   assert.deepEqual([calls.at(-1).args.x, calls.at(-1).args.y], [951, 660])
   assert.ok(!calls.some(call => call.name.endsWith('zoom')))
@@ -1308,11 +1370,11 @@ test('a reference point is forwarded to the grounder and refined', async t => {
 
 test('a grounder point far from the reference retries with a zoom crop', async t => {
   const answers = ["Action: click(point='(100,100)')", "Action: click(point='(120,240)')"]
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: answers.shift() } }],
-  }), { status: 200 }))
+  const llm = groundingLlm(answers)
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const name = batch[0].name
@@ -1324,7 +1386,7 @@ test('a grounder point far from the reference retries with a zoom crop', async t
       },
     },
   }
-  const point = await groundUi(ctx, {}, { grounder: { baseURL: 'http://localhost', model: 'ui-tars' }, grounding: {} }, {
+  const point = await groundUi(ctx, {}, { grounder: { provider: 'spark-grounder', model: 'ui-tars' }, grounding: {} }, {
     pid: 1, window_id: 2, instruction: 'click: 重要紧急', reference: { x: 940, y: 657 },
   })
   assert.equal(point.fromZoom, true)
@@ -1332,10 +1394,68 @@ test('a grounder point far from the reference retries with a zoom crop', async t
   assert.deepEqual(calls, ['mcp__cua-driver-mcp__get_window_state', 'mcp__cua-driver-mcp__zoom'])
 })
 
-test('normalized_1000 points are converted to screenshot pixels before clicking', async t => {
-  t.mock.method(globalThis, 'fetch', async () => { throw new Error('grounder must not be called') })
+test('a collapsed grounder answer for a different target retries on a zoom crop', async t => {
+  const answers = ["Action: click(point='(67,400)')", "Action: click(point='(120,240)')"]
+  const llm = groundingLlm(answers)
   const calls = []
   const ctx = {
+    llm,
+    attachments: groundingAttachments(),
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name
+        calls.push(name)
+        const value = name.endsWith('zoom')
+          ? { structuredContent: { width: 500, height: 361 }, content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/jpeg' }] }
+          : { structuredContent: { screenshot_width: 1568, screenshot_height: 1003 }, content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }] }
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const settings = {
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
+    grounding: { lastPoint: { x: 66, y: 400, width: 1568, height: 1003 }, lastTarget: '14:00 time slot' },
+  }
+  const point = await groundUi(ctx, {}, settings, {
+    pid: 1, window_id: 2, instruction: 'click: 14:00 grid area', reference: { x: 400, y: 345 },
+  })
+  assert.equal(point.fromZoom, true)
+  assert.deepEqual([point.x, point.y], [120, 240])
+  assert.deepEqual(calls, ['mcp__cua-driver-mcp__get_window_state', 'mcp__cua-driver-mcp__zoom'])
+})
+
+test('the same target may keep the same point without a zoom retry', async t => {
+  const llm = groundingLlm("Action: click(point='(402,120)')")
+  const calls = []
+  const ctx = {
+    llm,
+    attachments: groundingAttachments(),
+    tools: {
+      execute: async ({ calls: batch }) => {
+        calls.push(batch[0].name)
+        const value = { structuredContent: { screenshot_width: 1568, screenshot_height: 1003 }, content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }] }
+        return { results: [{ result: { isError: false, value } }] }
+      },
+    },
+  }
+  const settings = {
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
+    grounding: { lastPoint: { x: 402, y: 120, width: 1568, height: 1003 }, lastTarget: '备忘录编辑区' },
+  }
+  const point = await groundUi(ctx, {}, settings, {
+    pid: 1, window_id: 2, instruction: 'type: 备忘录编辑区', reference: { x: 600, y: 110 },
+  })
+  assert.equal(point.fromZoom, undefined)
+  assert.deepEqual(calls, ['mcp__cua-driver-mcp__get_window_state'])
+  assert.equal(settings.grounding.lastTarget, '备忘录编辑区')
+})
+
+test('normalized_1000 points are converted to screenshot pixels before clicking', async t => {
+  const llm = groundingLlm(() => { throw new Error('grounder must not be called') })
+  const calls = []
+  const ctx = {
+    llm,
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         calls.push({ name: batch[0].name, args: JSON.parse(batch[0].arguments) })
@@ -1346,7 +1466,7 @@ test('normalized_1000 points are converted to screenshot pixels before clicking'
   await operateUi(ctx, {}, {
     groundingMode: 'executor',
     executorCoordinateSpace: 'normalized_1000',
-    grounder: { baseURL: 'http://localhost', model: 'ui-tars' },
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
   }, {
     action: 'click 重要紧急', target: '重要紧急', locate: 'ground', point: { x: 500, y: 500 },
   }, { pid: 85726, window_id: 8228 }, { ref: { width: 1568, height: 980 } })

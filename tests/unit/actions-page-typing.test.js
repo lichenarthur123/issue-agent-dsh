@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { operateUi } from '../../packages/desktop-agent/src/actions.js'
+import { groundingAttachments, groundingLlm } from './helpers/grounding-llm.js'
 
 const window = { pid: 94262, window_id: 18506 }
 
@@ -21,9 +22,11 @@ const snapshot = {
   ],
 }
 
-function recorder(values = {}) {
+function recorder(values = {}, grounderAnswer = "Action: click(point='(231,219)')") {
   const calls = []
   const ctx = {
+    llm: groundingLlm(grounderAnswer),
+    attachments: groundingAttachments(),
     tools: {
       execute: async ({ calls: batch }) => {
         const call = batch[0]
@@ -102,17 +105,14 @@ test('a trailing newline submits the page-bound field with a keystroke return', 
 })
 
 test('grounded page typing falls back to the native path when no page textbox matches', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(start_box='(414,504)')" } }],
-  }), { status: 200 }))
   const { calls, ctx } = recorder({
     get_browser_state: { refs: [{ role: 'button', name: '提交订单', ref: 'p7:21' }] },
     get_window_state: {
       structuredContent: { screenshot_width: 1568, screenshot_height: 1087 },
       content: [{ type: 'image', data: Buffer.from([1]).toString('base64'), mimeType: 'image/png' }],
     },
-  })
-  const settings = { grounder: { baseURL: 'http://localhost', model: 'ui-tars' } }
+  }, "Action: click(start_box='(414,504)')")
+  const settings = { grounder: { provider: 'spark-grounder', model: 'ui-tars' } }
   const execution = await operateUi(ctx, {}, settings, {
     action: 'type 搜索', target: '搜索', value: '耳机', locate: 'ground',
   }, window, null, null, pageTarget)

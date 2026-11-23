@@ -95,8 +95,8 @@ chmod 600 .env
 
 同时核对两个文件中的服务地址：
 
-- `profiles/issue-agent/cordis.patch.yml`：`spark-executor`、`spark-planner` 的 baseURL 和模型 ID（默认走 `http://39.97.8.6:8080/vision/v1`；`spark-executor-local`、`spark-planner-local` 是局域网回滚路由）。
-- `packages/desktop-agent/cordis.patch.yml`：Executor/Planner 的模型、Grounder 的 baseURL（默认走 `http://39.97.8.6:8080/grounder/v1`）、模型 ID 和 `apiKeyEnv`。
+- `profiles/issue-agent/cordis.patch.yml`：`spark-planner`、`spark-executor`、`spark-grounder` 的 baseURL、模型 ID 和 `apiKeyEnv`（默认分别走 `http://39.97.8.6:8080/vision/v1` 和 `/grounder/v1`；对应的 `*-local` 是局域网回滚路由）。
+- `packages/desktop-agent/cordis.patch.yml`：Executor/Planner/Grounder 使用的 provider 和模型 ID。Grounder 默认 `provider: spark-grounder`、`model: ui-tars-1.5-7b`。
 
 当前实现中这些 profile 值不是 `.env` 插值，必须按目标环境修改。Executor 需要文本+图片输入；Grounder 默认 `ui-tars-1.5-7b`。网关要求 `X-Api-Key` 或 `Authorization: Bearer`，读超时 600s。不要把真实 `.env` 提交到 Git。
 

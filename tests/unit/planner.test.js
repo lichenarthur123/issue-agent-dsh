@@ -231,20 +231,20 @@ test('screenshot mode includes expanded business JSON without restoring the AX t
   assert.match(executorSystem('screenshot'), /copy that JSON verbatim/)
 })
 
-test('history keeps five full steps and summarizes the omitted steps', () => {
-  const history = Array.from({ length: 8 }, (_, index) => ({
+test('history keeps twenty steps and summarizes the omitted steps', () => {
+  const history = Array.from({ length: 28 }, (_, index) => ({
     step: index + 1,
     action: { kind: 'action', action: `a${index + 1}`, target: 'x', value: '' },
     result: { status: 'succeeded', summary: 'ok' },
   }))
   const compact = compactHistory(history)
-  assert.equal(compact.length, 5)
-  assert.equal(compact[0].step, 4)
-  assert.equal(compact.at(-1).step, 8)
+  assert.equal(compact.length, 20)
+  assert.equal(compact[0].step, 9)
+  assert.equal(compact.at(-1).step, 28)
   const prompt = buildExecutorPrompt({ request: 't', plan: 'p', history, observationMode: 'screenshot' })
   assert.match(prompt, /<history-summary>#1 action a1 -> succeeded/)
-  assert.match(prompt, /#3 action a3 -> succeeded/)
-  assert.match(prompt, /3 earlier steps are summarized above/)
+  assert.match(prompt, /#8 action a8 -> succeeded/)
+  assert.match(prompt, /8 earlier steps are summarized above/)
   const short = buildExecutorPrompt({ request: 't', plan: 'p', history: history.slice(0, 3), observationMode: 'screenshot' })
   assert.ok(!short.includes('<history-omitted>'))
   assert.ok(!short.includes('<history-summary>'))

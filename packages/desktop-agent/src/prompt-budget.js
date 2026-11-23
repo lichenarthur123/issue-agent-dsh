@@ -5,13 +5,14 @@ export const PROMPT_LIMITS = Object.freeze({
   ax: 12000,
   axContext: 2000,
   verifierAx: 8000,
-  historySummary: 2400,
-  historyAction: 300,
-  historyTarget: 200,
-  historyUrl: 500,
-  historyValue: 1000,
-  historyResult: 300,
-  historyError: 800,
+  historySummary: 1800,
+  historyAction: 80,
+  historyTarget: 50,
+  historyUrl: 120,
+  historyValue: 120,
+  historyResult: 100,
+  historyError: 200,
+  historyText: 4000,
   feedbackCurrent: 1200,
   feedbackPast: 500,
   feedbackPastCount: 5,
@@ -32,7 +33,7 @@ export function budgetText(value, limit) {
 export const SCREENSHOT_PROMPT_BUDGET = Object.freeze({
   systemBytes: 4800,
   userBytes: 3000,
-  historyBytes: 1500,
+  historyBytes: PROMPT_LIMITS.historyText,
 })
 
 export function textBytes(value) {

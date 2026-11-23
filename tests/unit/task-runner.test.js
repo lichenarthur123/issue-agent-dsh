@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { PRESERVE_WINDOWS_ON_FAILURE } from '../../packages/desktop-agent/src/cleanup.js'
-import { DesktopTaskRunner } from '../../packages/desktop-agent/src/task-runner.js'
+import { DesktopTaskRunner, findSheetDismissTarget, isScrollDecision, settleDelayFor } from '../../packages/desktop-agent/src/task-runner.js'
 
 const PLAN = '1. 打开 http://127.0.0.1:8765/#/home\n2. 进入 SKU 上架表单\n3. 填写商品名称 成人纸尿裤\n4. 点击确认上架'
 
@@ -103,6 +103,11 @@ function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOn
     attachments: { saveImage: async () => ({ attachmentId: 'image' }) },
     llm: {
       stream: async function* (options) {
+        if (options.maxTokens === 100) {
+          yield { type: 'text-delta', text: "Action: click(point='(231,219)')" }
+          yield { type: 'finish', reason: { kind: 'completed' } }
+          return
+        }
         modelCalls.push(options.maxTokens)
         llmModes.push(options.reasoningEffort ?? null)
         if (options.maxTokens === 1200) {
@@ -135,7 +140,7 @@ function harness(t, { decisions, verifications = [], maxSteps = 6, keepWindowsOn
     plannerEnabled,
     browserProfile: { mode: 'isolated_new' },
     executor: { provider: 'executor', model: 'vl' },
-    grounder: { baseURL: 'http://grounder', model: 'ui-tars' },
+    grounder: { provider: 'spark-grounder', model: 'ui-tars' },
     thinkingMode,
   }
   const runner = new DesktopTaskRunner(ctx, settings)
@@ -173,10 +178,24 @@ function userImages(messages) {
   return messages[1].content.filter(block => block.type === 'image')
 }
 
+test('repeated scrolling rounds are detected', () => {
+  assert.equal(isScrollDecision({ kind: 'scroll', value: 'down 5' }), true)
+  assert.equal(isScrollDecision({ kind: 'key', value: 'pagedown' }), true)
+  assert.equal(isScrollDecision({ kind: 'key', value: 'cmd+up' }), true)
+  assert.equal(isScrollDecision({ kind: 'key', value: 'return' }), false)
+  assert.equal(isScrollDecision({ kind: 'action', target: '下一页' }), false)
+})
+
+test('destructive clicks wait for the page to reflect the action', () => {
+  assert.equal(settleDelayFor({ kind: 'action', target: 'Delete', action: 'Click Delete' }, 'succeeded'), 1500)
+  assert.equal(settleDelayFor({ kind: 'action', target: '确认上架', action: '点击确认上架' }, 'succeeded'), 1500)
+  assert.equal(settleDelayFor({ kind: 'action', target: '搜索', action: 'Click 搜索' }, 'succeeded'), 0)
+  assert.equal(settleDelayFor({ kind: 'action', target: 'Delete', action: 'Click Delete' }, 'failed'), 0)
+  assert.equal(settleDelayFor({ kind: 'action', target: 'Delete', action: 'type 删除', value: '删除' }, 'succeeded'), 0)
+  assert.equal(settleDelayFor({ kind: 'navigate', url: 'https://example.com/delete' }, 'succeeded'), 0)
+})
+
 test('the planner expands once and the executor owns a compact loop', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const h = harness(t, {
     decisions: [
       {
@@ -492,6 +511,104 @@ test('a launched app becomes the observed foreground window', async () => {
   assert.deepEqual(calls[1].args, { pid: 74267, window_id: 17280 })
 })
 
+test('only a button that dismisses a sheet without committing it is chosen', () => {
+  const sheet = { role: 'AXSheet', element_index: 3, label: '新建文件夹' }
+  assert.equal(findSheetDismissTarget([{ role: 'AXButton', label: '取消', element_token: 'snap:1' }]), null)
+  assert.deepEqual(
+    findSheetDismissTarget([
+      sheet,
+      { role: 'AXButton', element_index: 9, parent_index: 3, label: '取消', element_token: 'snap:9' },
+      { role: 'AXButton', element_index: 10, parent_index: 3, label: '存储', element_token: 'snap:10' },
+    ]).button.element_token,
+    'snap:9',
+  )
+  assert.equal(findSheetDismissTarget([
+    sheet,
+    { role: 'AXButton', element_index: 10, parent_index: 3, label: '存储', element_token: 'snap:10' },
+  ]).button, null)
+})
+
+test('a blocking sheet is dismissed once so the window can come forward', async () => {
+  let sheetOpen = true
+  const calls = []
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name.replace('mcp__cua-driver-mcp__', '')
+        const args = JSON.parse(batch[0].arguments)
+        calls.push({ name, args })
+        if (name === 'bring_to_front') {
+          const value = { activated: true, exact_window_effect: { verified: !sheetOpen }, observed: {} }
+          return { results: [{ result: { isError: false, value } }] }
+        }
+        if (name === 'click' && args.element_token) sheetOpen = false
+        return { results: [{ result: { isError: false, value: {} } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const observation = {
+    snapshotId: 'snap-1',
+    elements: [
+      { role: 'AXSheet', element_index: 3, label: '新建文件夹' },
+      { role: 'AXButton', element_index: 9, parent_index: 3, label: '取消', element_token: 'snap:9' },
+      { role: 'AXButton', element_index: 10, parent_index: 3, label: '存储', element_token: 'snap:10' },
+    ],
+  }
+  assert.equal(await runner.ensureFrontmost({}, { pid: 27653, window_id: 5917 }, observation), true)
+  const dismiss = calls.find(call => call.name === 'click' && call.args.element_token)
+  assert.equal(dismiss.args.element_token, 'snap:9')
+  assert.equal(dismiss.args.delivery_mode, 'background')
+  assert.equal(dismiss.args.snapshot_id, 'snap-1')
+  const clicks = calls.filter(call => call.name === 'click').length
+  assert.equal(await runner.ensureFrontmost({}, { pid: 27653, window_id: 5917 }, observation), true)
+  assert.equal(calls.filter(call => call.name === 'click').length, clicks, 'the dismissal is attempted once per window')
+})
+
+test('a sheet without a dismiss button falls back to escape', async () => {
+  const calls = []
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name.replace('mcp__cua-driver-mcp__', '')
+        calls.push({ name, args: JSON.parse(batch[0].arguments) })
+        return { results: [{ result: { isError: false, value: {} } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const observation = {
+    elements: [
+      { role: 'AXSheet', element_index: 3 },
+      { role: 'AXButton', element_index: 10, parent_index: 3, label: '存储', element_token: 'snap:10' },
+    ],
+  }
+  await runner.dismissBlockingSheet({}, { pid: 27653, window_id: 5917 }, observation)
+  const key = calls.find(call => call.name === 'press_key')
+  assert.equal(key.args.key, 'escape')
+  assert.equal(key.args.delivery_mode, 'background')
+})
+
+test('a launch whose window never appears reports the activation failure', async () => {
+  const values = {
+    list_apps: { apps: [{ name: 'Notes', bundle_id: 'com.apple.Notes', running: false }] },
+    launch_app: { pid: 4242, launch_state: { process_running: true } },
+    list_windows: { windows: [] },
+  }
+  const ctx = {
+    tools: {
+      execute: async ({ calls: batch }) => {
+        const name = batch[0].name.replace('mcp__cua-driver-mcp__', '')
+        return { results: [{ result: { isError: false, value: values[name] ?? {} } }] }
+      },
+    },
+  }
+  const runner = new DesktopTaskRunner(ctx, {})
+  const execution = await runner.launchApp({}, { kind: 'launch', target: 'Notes' })
+  assert.match(execution.response, /^Launched Notes \(com\.apple\.Notes\); activation failed: /)
+  assert.equal(execution.activation.status, 'failed')
+})
+
 test('executor rejects invented window identifiers before calling CUA', () => {
   const runner = new DesktopTaskRunner({}, {})
   runner.rememberWindows([{ pid: 1067, window_id: 17280 }])
@@ -571,9 +688,6 @@ test('observation never targets the Cua Driver authorization window', async () =
   }), /own authorization process/)
 })
 test('thinking is escalated only while a step is stuck', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const click = target => ({
     done: false,
     kind: 'action',
@@ -748,9 +862,6 @@ test('the observation carries the installed and running apps', async () => {
   assert.equal(observation.text, 'lark AX')
 })
 test('thinking always mode sends reasoning effort on every executor call', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const h = harness(t, {
     decisions: [
       { done: false, kind: 'action', action: 'click 保存', target: '保存', locate: 'ground' },
@@ -764,9 +875,6 @@ test('thinking always mode sends reasoning effort on every executor call', async
 })
 
 test('thinking off never escalates even when a step repeats', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const click = { done: false, kind: 'action', action: 'click 任务明细', target: '任务明细', locate: 'ground' }
   const h = harness(t, {
     decisions: [click, click, { done: true, response: '已新增任务记录' }],
@@ -778,9 +886,6 @@ test('thinking off never escalates even when a step repeats', async t => {
 })
 
 test('a batch runs several actions in one decision round', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const h = harness(t, {
     decisions: [
       {
@@ -802,9 +907,6 @@ test('a batch runs several actions in one decision round', async t => {
 })
 
 test('a failed action cancels the rest of the batch', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const click = target => ({ kind: 'action', action: `click ${target}`, target, locate: 'ground' })
   const h = harness(t, {
     decisions: [
@@ -820,9 +922,6 @@ test('a failed action cancels the rest of the batch', async t => {
 })
 
 test('an unchanged screen produces no-progress feedback on the next decision', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const click = { done: false, kind: 'action', action: 'click 个人任务', target: '个人任务', locate: 'ground' }
   const h = harness(t, {
     decisions: [click, click, { done: true, response: '结束' }],
@@ -861,9 +960,6 @@ test('a wait step succeeds without changing adaptive thinking', async t => {
 })
 
 test('repeated targets get explicit feedback even when screenshots differ', async t => {
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Action: click(point='(231,219)')" } }],
-  }), { status: 200 }))
   const click = { done: false, kind: 'action', action: 'click 27B模型推理优化', target: '27B模型推理优化', locate: 'ground' }
   const h = harness(t, {
     decisions: [click, click, click, { done: true, response: '结束' }],

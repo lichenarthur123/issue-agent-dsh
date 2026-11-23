@@ -62,6 +62,23 @@
               low: low
               medium: medium
               xhigh: xhigh
+      spark-grounder:
+        apiKeyEnv: GW_KEY
+        api: openai-completions
+        baseURL: http://39.97.8.6:8080/grounder/v1
+        timeoutMs: 600000
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: ui-tars-1.5-7b
+            input: [text, image]
+            contextWindow: 32768
+            maxTokens: 512
+          - id: gta1-7b
+            input: [text, image]
+            contextWindow: 32768
+            maxTokens: 512
       # 回滚用：局域网直连 DGX Spark，无鉴权，延迟约 3ms。
       spark-planner-local:
         apiKeyEnv: DESKTOP_LOCAL_API_KEY
@@ -105,6 +122,23 @@
               low: low
               medium: medium
               xhigh: xhigh
+      spark-grounder-local:
+        apiKeyEnv: DESKTOP_LOCAL_API_KEY
+        api: openai-completions
+        baseURL: http://10.10.10.1:8003/v1
+        timeoutMs: 120000
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: ui-tars-1.5-7b
+            input: [text, image]
+            contextWindow: 32768
+            maxTokens: 512
+          - id: gta1-7b
+            input: [text, image]
+            contextWindow: 32768
+            maxTokens: 512
       alicloud:
         apiKeyEnv: CUA_MODEL_API_KEY
         api: openai-completions

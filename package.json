@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "bash -c 'for f in packages/desktop-agent/src/*.js packages/git-issue-agent/src/*.js tests/e2e/*.mjs; do node --check \"$f\" || exit 1; done'",
+    "check": "bash -c 'for f in packages/desktop-agent/src/*.js packages/desktop-orchestrator/src/*.js packages/git-issue-agent/src/*.js tests/e2e/*.mjs; do node --check \"$f\" || exit 1; done'",
     "test": "node --test tests/unit/*.test.js",
     "test:e2e": "node tests/e2e/issue-flow.mjs",
     "issues": "bash ./issue-agent.sh",

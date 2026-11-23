@@ -1,0 +1,13 @@
+- insert:
+    - id: desktop-orchestrator
+      name: '@local/desktop-orchestrator'
+      config:
+        checkpointRoot: artifacts/long-tasks
+        taskTimeoutSeconds: 1800
+        maxSubtasks: 20
+        maxTotalActions: 120
+        cleanup: preserve
+        supervisor:
+          provider: spark-executor
+          model: qwen3.8-27b-nvfp4
+        thinkingEffort: low

@@ -1,6 +1,6 @@
 import { budgetBytes, clip, PROMPT_LIMITS, textBytes } from './prompt-budget.js'
 
-export const RECENT_HISTORY_LIMIT = 5
+export const RECENT_HISTORY_LIMIT = 20
 
 export function compactHistory(history = [], { limit = RECENT_HISTORY_LIMIT, brief = false } = {}) {
   return history.slice(-limit).map(step => {
@@ -10,11 +10,11 @@ export function compactHistory(history = [], { limit = RECENT_HISTORY_LIMIT, bri
         step: step.step,
         action: {
           kind: action.kind ?? 'action',
-          action: clip(action.action ?? '', 120),
+          action: clip(action.action ?? '', 60),
         },
         result: {
           status: step.result?.status ?? 'unknown',
-          ...step.result?.summary ? { summary: clip(step.result.summary, 120) } : {},
+          ...step.result?.summary ? { summary: clip(step.result.summary, 60) } : {},
         },
       }
     }
@@ -42,7 +42,7 @@ export function summarizeHistory(history = [], { limit = RECENT_HISTORY_LIMIT, m
   const omitted = history.slice(0, -limit)
   const lines = omitted.map(step => {
     const action = step.action ?? {}
-    const label = clip(action.action || [action.kind, action.target].filter(Boolean).join(' '), 120)
+    const label = clip(action.action || [action.kind, action.target].filter(Boolean).join(' '), 80)
     const status = step.result?.status ?? 'unknown'
     return [`#${step.step} ${action.kind ?? 'action'}`, label, `-> ${status}`].filter(Boolean).join(' ')
   })
@@ -83,8 +83,10 @@ export function renderHistory(history = [], { maxBytes = Number.POSITIVE_INFINIT
   const candidates = [
     { limit: RECENT_HISTORY_LIMIT, summary: true, brief: false },
     { limit: RECENT_HISTORY_LIMIT, summary: false, brief: false },
-    { limit: 3, summary: false, brief: false },
-    { limit: 3, summary: false, brief: true },
+    { limit: RECENT_HISTORY_LIMIT, summary: true, brief: true },
+    { limit: RECENT_HISTORY_LIMIT, summary: false, brief: true },
+    { limit: 10, summary: false, brief: true },
+    { limit: 5, summary: false, brief: true },
     { limit: 1, summary: false, brief: true },
   ]
   let text = ''

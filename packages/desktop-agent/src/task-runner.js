@@ -23,6 +23,54 @@ import { callCuaTool, captureWindow, ensureWindowVisible } from './window.js'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+const DESTRUCTIVE_ACTION = /\b(?:delete|remove|confirm|submit)\b|删除|确认|确定|提交/i
+const DESTRUCTIVE_SETTLE_MS = 1500
+const SHEET_ROLE = /^(?:AX)?(?:Sheet|Dialog)$/i
+const SHEET_DISMISS_LABEL = /^(?:cancel|close|dismiss|not now|later|取消|关闭|以后再说|稍后)$/i
+
+// Modal sheets (a save dialog, a "new folder" prompt) keep input focus, so the
+// window behind them cannot be brought to the front. Pick the safest button that
+// only dismisses the sheet, and never anything that commits it.
+export function findSheetDismissTarget(elements) {
+  const all = elements ?? []
+  const sheets = all.filter(element => SHEET_ROLE.test(element?.role ?? ''))
+  if (sheets.length === 0) return null
+  const byIndex = new Map()
+  for (const element of all) {
+    if (Number.isInteger(element?.element_index)) byIndex.set(element.element_index, element)
+  }
+  const sheetIndexes = new Set(sheets.map(element => element.element_index))
+  const insideSheet = element => {
+    let parent = byIndex.get(element.parent_index)
+    for (let depth = 0; parent && depth < 12; depth += 1) {
+      if (sheetIndexes.has(parent.element_index)) return true
+      parent = byIndex.get(parent.parent_index)
+    }
+    return false
+  }
+  const button = all.find(element => (
+    element.element_token
+    && /button/i.test(element.role ?? '')
+    && SHEET_DISMISS_LABEL.test(String(element.label ?? element.value ?? '').trim())
+    && (sheetIndexes.has(element.element_index) || insideSheet(element))
+  ))
+  return { sheet: sheets[0], button: button ?? null }
+}
+
+export function isScrollDecision(decision) {
+  if (!decision) return false
+  if (decision.kind === 'scroll') return true
+  return decision.kind === 'key' && /(page|home|end|up|down)/i.test(String(decision.value ?? ''))
+}
+
+export function settleDelayFor(decision, status) {
+  if (!decision || decision.kind !== 'action' || decision.value) return 0
+  if (status !== 'succeeded') return 0
+  return DESTRUCTIVE_ACTION.test(`${decision.target ?? ''} ${decision.action ?? ''}`)
+    ? DESTRUCTIVE_SETTLE_MS
+    : 0
+}
+
 function readResult(artifactRoot, sessionId) {
   try {
     return JSON.parse(readFileSync(join(artifactRoot, sessionId, 'result.json'), 'utf8'))
@@ -397,10 +445,13 @@ export class DesktopTaskRunner {
       return execution
     }
     await this.activateLaunchedApp(agent, execution)
+    if (execution.activation?.status === 'failed') {
+      execution.response = `${execution.response}; activation failed: ${execution.activation.reason}`
+    }
     return execution
   }
 
-  async ensureFrontmost(agent, window) {
+  async ensureFrontmost(agent, window, observation = null) {
     if (!window?.pid) return true
     try {
       await ensureWindowVisible(this.ctx, agent, window)
@@ -408,6 +459,46 @@ export class DesktopTaskRunner {
       return true
     } catch (error) {
       log.error(`window not visible pid=${window.pid} window=${window.window_id}: ${error.message}`)
+      if (!await this.dismissBlockingSheet(agent, window, observation)) return false
+      try {
+        await ensureWindowVisible(this.ctx, agent, window)
+        log.exec(`window visible after dismissing a sheet pid=${window.pid} window=${window.window_id}`)
+        return true
+      } catch (retry) {
+        log.error(`window still not visible pid=${window.pid} window=${window.window_id}: ${retry.message}`)
+        return false
+      }
+    }
+  }
+
+  async dismissBlockingSheet(agent, window, observation) {
+    const key = `${window.pid}:${window.window_id}`
+    if (this.sheetRecovery?.has(key)) return false
+    this.sheetRecovery ??= new Set()
+    this.sheetRecovery.add(key)
+    const target = findSheetDismissTarget(observation?.elements ?? [])
+    if (target?.button) {
+      log.exec(`dismissing blocking ${target.sheet.label ?? target.sheet.role} with "${target.button.label}"`)
+      try {
+        await callCuaTool(this.ctx, agent, 'click', {
+          ...window,
+          element_token: target.button.element_token,
+          ...observation?.snapshotId ? { snapshot_id: observation.snapshotId } : {},
+          delivery_mode: 'background',
+        })
+        await delay(400)
+        return true
+      } catch (error) {
+        log.error(`could not dismiss the blocking sheet: ${error.message}`)
+      }
+    }
+    log.exec('no dismiss button for the blocking sheet; pressing escape')
+    try {
+      await callCuaTool(this.ctx, agent, 'press_key', { ...window, key: 'escape', delivery_mode: 'background' })
+      await delay(400)
+      return true
+    } catch (error) {
+      log.error(`could not press escape: ${error.message}`)
       return false
     }
   }
@@ -437,6 +528,7 @@ export class DesktopTaskRunner {
   async executeDecision(agent, decision, observation) {
     if (decision.kind === 'navigate' || decision.kind === 'launch') {
       this.settings.grounding.lastPoint = null
+      this.settings.grounding.lastTarget = null
     }
     if (decision.kind === 'navigate') {
       const resetKey = resetNavigationKey(decision)
@@ -490,7 +582,7 @@ export class DesktopTaskRunner {
         response: 'no target window is available; open the required page or application first',
       }
     }
-    const visible = await this.ensureFrontmost(agent, window)
+    const visible = await this.ensureFrontmost(agent, window, observation)
     if (!visible) {
       return {
         calls: [{
@@ -611,6 +703,7 @@ export class DesktopTaskRunner {
       let finalResponse = ''
       let finalBlocked = false
       let unchangedCount = 0
+      let scrollStreak = 0
       const failureCounts = new Map()
       let timeoutStreak = 0
       let timeoutRecoveryAttempted = false
@@ -799,6 +892,19 @@ export class DesktopTaskRunner {
           }
         }
         if (finalBlocked) break
+        scrollStreak = decisions.every(isScrollDecision) ? scrollStreak + 1 : 0
+        if (scrollStreak >= 4) {
+          feedbacks.merge(`You have scrolled ${scrollStreak} rounds in a row. Stop scrolling and work from the visible content now; jump once with kind=key value=home/end only if the target is genuinely off-screen.`)
+          if (!thinking && thinkingMode !== 'off') {
+            thinking = true
+            log.plan('thinking on: repeated scrolling')
+          }
+        }
+        const settleMs = settleDelayFor(decisions.at(-1), steps.at(-1)?.execution.status)
+        if (settleMs > 0) {
+          log.exec(`waiting ${settleMs}ms for the page to reflect the destructive action`)
+          await delay(settleMs)
+        }
         if (steps.length > 0) {
           try {
             observation = await this.observe(agent)

@@ -4,6 +4,8 @@
 
 ## 1. 架构与职责
 
+通用长任务编排的 V1 设计与开发方案见 `desktop-orchestrator.md`。
+
 ```text
 GitHub Issue
   → git-issue-agent 轮询、去重、排队
@@ -36,17 +38,17 @@ GitHub Issue
 
 - Planner（可选，默认关闭）：`http://39.97.8.6:8080/vision/v1`，`qwen3.8-27b-nvfp4`（与 Executor 同一个模型，不再使用 4B 做计划扩写）
 - Executor：`http://39.97.8.6:8080/vision/v1`，`qwen3.8-27b-nvfp4`（`thinkingEffort: low`）
-- Grounder：`http://39.97.8.6:8080/grounder/v1`，`ui-tars-1.5-7b`
+- Grounder：provider `spark-grounder` → `http://39.97.8.6:8080/grounder/v1`，`ui-tars-1.5-7b`
 - 会话压缩摘要：同样使用 `http://39.97.8.6:8080/vision/v1` 的 `qwen3.8-27b-nvfp4`，通过 `enable_thinking:false` 关闭思考。
 
-网关鉴权二选一：`X-Api-Key: <GW_KEY>` 或 `Authorization: Bearer <GW_KEY>`；DSH 的 provider 通过 `apiKeyEnv: GW_KEY` 读取，Grounder 直接发 `X-Api-Key`。Key 只放在 `.env` 或 `~/.workbench/relay.env`，不要提交。客户端读超时为 600s（`timeoutMs` / `DESKTOP_GROUNDER_TIMEOUT_SECONDS`），上传图片走请求体，单请求上限 100MB。
+网关鉴权二选一：`X-Api-Key: <GW_KEY>` 或 `Authorization: Bearer <GW_KEY>`。所有模型调用（Planner / Executor / Verify / 压缩摘要 / Grounder）都走 DSH 的 provider 抽象：调用方只传 `provider + model`，地址、鉴权、超时、重试、图片编码都在 `profiles/issue-agent/cordis.patch.yml` 的 `llm-pi-ai.providers` 里配置，provider 通过 `apiKeyEnv: GW_KEY` 读取。Key 只放在 `.env` 或 `~/.workbench/relay.env`，不要提交。读超时 600s（`timeoutMs`），Grounder 用 `spark-grounder` 路由，上传图片走请求体，网关单请求上限 100MB。
 
-局域网直连仍然可用，并保留为回滚路径（快约 100 倍，仅多网络环境才需要网关）：provider `spark-planner-local` / `spark-executor-local` 指向 `http://10.10.10.1:8005/v1`，Grounder 改回 `http://10.10.10.1:8003/v1`。回滚可用环境变量，无需改文件：
+局域网直连仍然可用，并保留为回滚路径（快约 100 倍，仅多网络环境才需要网关）：provider `spark-planner-local` / `spark-executor-local` / `spark-grounder-local` 分别指向 `http://10.10.10.1:8005/v1` 和 `http://10.10.10.1:8003/v1`。回滚可用环境变量，无需改文件：
 
 ```bash
 DESKTOP_PLANNER_PROVIDER=spark-planner-local \
 DESKTOP_EXECUTOR_PROVIDER=spark-executor-local \
-DESKTOP_GROUNDER_BASE_URL=http://10.10.10.1:8003/v1 \
+DESKTOP_GROUNDER_PROVIDER=spark-grounder-local \
 ./issue-agent.sh
 ```
 

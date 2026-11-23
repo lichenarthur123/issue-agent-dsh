@@ -28,14 +28,6 @@ export function parseGroundingPoint(text, width, height) {
 
 const DROPDOWN_RULE = 'If a dropdown menu or popup is open, click the matching option inside that menu or popup; never click identical text elsewhere on the page, in cards, or in filter chips.'
 
-// The gateway rejects request bodies above this size; fail locally with a clear message.
-const MAX_REQUEST_BYTES = 100 * 1024 * 1024
-
-function requestSignal(signal, timeoutMs) {
-  const timeout = AbortSignal.timeout(timeoutMs)
-  return signal ? AbortSignal.any([signal, timeout]) : timeout
-}
-
 function cropAround(anchor) {
   const width = anchor.width ?? 1568
   const height = anchor.height ?? 980
@@ -70,36 +62,34 @@ export async function groundUi(ctx, agent, settings, { pid, window_id, instructi
         image: image.data?.byteLength ?? 0,
       },
     })
-    const body = JSON.stringify({
-      model: settings.grounder.model,
+    const attachment = await ctx.attachments.saveImage({
+      data: image.data,
+      mediaType: image.ref.mediaType,
+    })
+    let answer = ''
+    let failure
+    let usage = {}
+    for await (const chunk of ctx.llm.stream({
+      ...settings.grounder,
       messages: [{
         role: 'user',
         content: [
           { type: 'text', text: `${GROUNDING_PROMPT}${text}` },
-          { type: 'image_url', image_url: { url: `data:${image.ref.mediaType};base64,${Buffer.from(image.data).toString('base64')}` } },
+          { type: 'image', attachment },
         ],
       }],
-      max_tokens: 100,
+      maxTokens: 100,
       temperature: 0,
-    })
-    const bodyBytes = Buffer.byteLength(body)
-    if (bodyBytes > MAX_REQUEST_BYTES) {
-      throw new Error(`grounder request body is ${bodyBytes}B, above the 100MB gateway limit`)
+      signal,
+    })) {
+      if (chunk.type === 'text-delta') answer += chunk.text
+      if (chunk.type === 'usage') usage = chunk.usage
+      if (chunk.type === 'finish') failure = chunk.reason
     }
-    const response = await fetch(`${settings.grounder.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...settings.grounder.apiKey ? { 'x-api-key': settings.grounder.apiKey } : {},
-      },
-      body,
-      signal: requestSignal(signal, settings.grounder.timeoutMs ?? 600000),
-    })
-    if (!response.ok) throw new Error(`grounder HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`)
-    const payload = await response.json()
-    const content = payload.choices?.[0]?.message?.content ?? ''
-    logModelEnd(settings.grounder, startedAt, payload.usage, content)
-    return parseGroundingPoint(content, image.ref.width, image.ref.height)
+    logModelEnd(settings.grounder, startedAt, usage, answer)
+    if (failure?.kind === 'error') throw new Error(failure.failure?.message ?? 'grounder failed')
+    if (failure?.kind === 'aborted') throw new Error('grounder was cancelled')
+    return parseGroundingPoint(answer, image.ref.width, image.ref.height)
   }
 
   const ask = async () => {

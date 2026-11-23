@@ -14,6 +14,7 @@ const normalizeLabel = text => String(text ?? '')
   .replace(/[＊*]+\s*$/, '')
   .trim()
 
+const VIEWPORT_TARGET = /^(page|screen|window|viewport|页面|屏幕|窗口|视口)$/i
 const CLICKABLE_ROLE = /^(AX)?(Button|Link|MenuItem|Tab|CheckBox|RadioButton|DisclosureTriangle)$/i
 const INPUT_ROLE = /^(AX)?(TextField|TextArea|SearchField|Incrementor|ComboBox)$/i
 const POPUP_ROLE = /PopUpButton|ComboBox/i
@@ -426,7 +427,9 @@ export async function waitForScreen(decision) {
 export async function scrollWindow(ctx, agent, decision, targetWindow, observation) {
   if (!targetWindow?.pid) throw new Error('scroll requires an active target window')
   const { execution, invoke } = createExecution()
-  const element = decision.target ? findElementByLabel(observation?.elements ?? [], decision.target) : null
+  const element = decision.target && !VIEWPORT_TARGET.test(normalizeLabel(decision.target))
+    ? findElementByLabel(observation?.elements ?? [], decision.target)
+    : null
   const args = {
     ...targetWindow,
     ...element ? {
@@ -477,61 +480,99 @@ export async function pressChord(ctx, agent, decision, targetWindow, observation
 }
 
 export async function clickVariant(ctx, agent, settings, decision, targetWindow, observation, signal, { tool, verb }) {
-  if (!targetWindow?.pid) throw new Error(`${verb.toLowerCase()} requires an active target window`)
   const { execution, invoke } = createExecution()
-  const element = decision.locate === 'ground'
-    ? null
-    : findActionableElement(observation?.elements ?? [], decision.target, false)
-  if (element) {
-    await hoverElement(ctx, agent, targetWindow, observation, element)
+  try {
+    if (!targetWindow?.pid) throw new Error(`${verb.toLowerCase()} requires an active target window`)
+    const element = decision.locate === 'ground'
+      ? null
+      : findActionableElement(observation?.elements ?? [], decision.target, false)
+    if (element) {
+      await hoverElement(ctx, agent, targetWindow, observation, element)
+      await invoke(ctx, agent, tool, {
+        ...targetWindow,
+        element_token: element.element_token,
+        ...observation?.snapshotId ? { snapshot_id: observation.snapshotId } : {},
+        delivery_mode: 'background',
+      })
+      execution.response = `${verb} ${normalizeLabel(element.label ?? element.value)} via AX ${element.element_token}`
+      return execution
+    }
+    const groundingMode = settings.groundingMode ?? 'auto'
+    const point = await groundUi(ctx, agent, settings, {
+      ...targetWindow,
+      instruction: `${verb.toLowerCase()}: ${decision.target}`,
+      context: decision.action,
+      anchor: decision.point ? null : optionAnchor(settings, decision),
+      reference: groundingMode === 'grounder' ? null : pixelPoint(decision, observation, settings),
+    }, signal)
     await invoke(ctx, agent, tool, {
       ...targetWindow,
-      element_token: element.element_token,
-      ...observation?.snapshotId ? { snapshot_id: observation.snapshotId } : {},
-      delivery_mode: 'background',
+      x: point.x,
+      y: point.y,
+      delivery_mode: 'foreground',
+      ...point.fromZoom ? { from_zoom: true } : {},
     })
-    execution.response = `${verb} ${normalizeLabel(element.label ?? element.value)} via AX ${element.element_token}`
+    execution.response = `${verb} ${decision.target} at (${point.x},${point.y})${point.fromZoom ? ' from_zoom' : ''}`
+    return execution
+  } catch (error) {
+    for (const entry of execution.calls.filter(call => call.status === 'pending')) {
+      entry.status = 'failed'
+      entry.error = error.message
+    }
+    if (execution.calls.length === 0) {
+      execution.calls.push({
+        callId: `act-${randomUUID()}`,
+        tool: `${CUA_TOOL_PREFIX}${tool}`,
+        status: 'failed',
+        error: error.message,
+      })
+    }
+    execution.response = error.message
     return execution
   }
-  const point = await groundUi(ctx, agent, settings, {
-    ...targetWindow,
-    instruction: `${verb.toLowerCase()}: ${decision.target}`,
-    context: decision.action,
-  }, signal)
-  await invoke(ctx, agent, tool, {
-    ...targetWindow,
-    x: point.x,
-    y: point.y,
-    delivery_mode: 'foreground',
-  })
-  execution.response = `${verb} ${decision.target} at (${point.x},${point.y})`
-  return execution
 }
 
 export async function dragBetween(ctx, agent, settings, decision, targetWindow, observation, signal) {
-  if (!targetWindow?.pid) throw new Error('drag requires an active target window')
   const { execution, invoke } = createExecution()
-  const resolve = async (label, instruction) => {
-    if (decision.locate !== 'ground') {
-      const element = findElementByLabel(observation?.elements ?? [], label)
-      const point = element ? hoverPoint(observation, element) : null
-      if (point) return point
+  try {
+    if (!targetWindow?.pid) throw new Error('drag requires an active target window')
+    const resolve = async (label, instruction) => {
+      if (decision.locate !== 'ground') {
+        const element = findElementByLabel(observation?.elements ?? [], label)
+        const point = element ? hoverPoint(observation, element) : null
+        if (point) return point
+      }
+      return groundUi(ctx, agent, settings, { ...targetWindow, instruction: `${instruction}: ${label}` }, signal)
     }
-    return groundUi(ctx, agent, settings, { ...targetWindow, instruction: `${instruction}: ${label}` }, signal)
+    const from = await resolve(decision.target, 'drag from')
+    const to = await resolve(decision.value, 'drag to')
+    await invoke(ctx, agent, 'drag', {
+      ...targetWindow,
+      from_x: from.x,
+      from_y: from.y,
+      to_x: to.x,
+      to_y: to.y,
+      duration_ms: 500,
+      delivery_mode: 'foreground',
+    })
+    execution.response = `Dragged ${decision.target} to ${decision.value}`
+    return execution
+  } catch (error) {
+    for (const entry of execution.calls.filter(call => call.status === 'pending')) {
+      entry.status = 'failed'
+      entry.error = error.message
+    }
+    if (execution.calls.length === 0) {
+      execution.calls.push({
+        callId: `act-${randomUUID()}`,
+        tool: `${CUA_TOOL_PREFIX}drag`,
+        status: 'failed',
+        error: error.message,
+      })
+    }
+    execution.response = error.message
+    return execution
   }
-  const from = await resolve(decision.target, 'drag from')
-  const to = await resolve(decision.value, 'drag to')
-  await invoke(ctx, agent, 'drag', {
-    ...targetWindow,
-    from_x: from.x,
-    from_y: from.y,
-    to_x: to.x,
-    to_y: to.y,
-    duration_ms: 500,
-    delivery_mode: 'foreground',
-  })
-  execution.response = `Dragged ${decision.target} to ${decision.value}`
-  return execution
 }
 
 export async function selectOption(ctx, agent, settings, decision, targetWindow, observation, signal) {
